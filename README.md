@@ -72,20 +72,31 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 ```
 User Query → Intent Detection → Orchestrator
                                     ↓
+                              MCP Client
+                                    ↓
           ┌─────────────────────────┼──────────────────────┐
           ▼                         ▼                      ▼
-    Kusto Query               RAG Search              LLM Fallback
-    (telemetry)              (documentation)         (generation)
+    MCP Tool: Kusto         MCP Tool: RAG          LLM Fallback
+    (get_recommendations)   (search_docs)         (generation)
+          │                         │                      │
+          ▼                         ▼                      ▼
+   Azure Kusto DB          Azure AI Search        Azure OpenAI
+   (SparkLens data)       (Fabric docs)           (GPT-4o)
           │                         │                      │
           └─────────────────────────┼──────────────────────┘
                                     ▼
                               LLM Judge
-                            (validation)
+                         (validation & ranking)
                                     ▼
                           Validated Results
-                                    ▼
+                                    ▓
                           User (formatted)
 ```
+
+**Key Architecture Principle:**
+- ✅ **ALL data access** flows through MCP tools (unified interface)
+- ✅ **NO direct** Kusto/Search queries from Orchestrator
+- ✅ **Consistent** authentication and error handling across all interfaces
 
 ## 🚦 Quick Start
 
