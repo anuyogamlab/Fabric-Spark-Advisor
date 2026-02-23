@@ -32,7 +32,7 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 - 💬 **Conversational Interface** - Natural language queries with intent detection
 - 📊 **Multi-Interface Support** - Chainlit UI, VS Code Copilot, Fabric Notebooks, Python API
 - 🔄 **Feedback Loop** - Learn from user ratings to improve future suggestions
-- ⚡ **7 MCP Tools** - Unified data access across all interfaces
+- ⚡ **8 MCP Tools** - Unified data access with natural language query support
 - 🎨 **Professional UI** - Interactive widgets, rich formatting, clickable feedback
 - 🔐 **Enterprise Ready** - Multi-auth fallback, Azure integration, secure credential handling
 
@@ -49,7 +49,7 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 - **Recommender Notebook** - Generates Fabric-specific recommendations
 
 **MCP Server Layer:**
-- **7 MCP Tools** - Unified data access (SSE protocol, port 8000)
+- **8 MCP Tools** - Unified data access (SSE protocol, port 8000)
   - get_spark_recommendations
   - get_fabric_recommendations
   - get_application_metrics
@@ -57,6 +57,7 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
   - get_scaling_predictions
   - get_stage_summary
   - get_bad_practice_applications
+  - search_recommendations_by_category
 
 **Orchestration & Intelligence:**
 - **Orchestrator** (Semantic Kernel) - 3-layer retrieval: Kusto → RAG → LLM
@@ -121,31 +122,11 @@ This MCP tool **consumes** SparkLens data and recommendations. You must first se
    - `sparklens_metrics` (performance metrics)
    - `sparklens_metadata` (Spark config properties)
    - `sparklens_predictions` (scaling what-if scenarios)
-   - `sparkagent_feedback` (user feedback history)
+   - `fabric_recommedations`
 
-### Setup Steps
-
-1. **Follow the Fabric Toolbox guide** to deploy:
-   - Kusto database with monitoring tables
-   - Eventstream configured for your Fabric workspaces
-   - Recommender notebook scheduled to run periodically
-
-2. **Verify data ingestion:**
-   ```kql
-   sparklens_recommedations
-   | where ingestion_time() > ago(1d)
-   | count
-   ```
-   You should see recommendation records for your Spark applications.
-
-3. **Note your connection details** (needed for `.env` configuration):
-   - Kusto cluster URI
-   - Database name
-   - Azure OpenAI endpoint (if using AI features)
-   - Azure AI Search endpoint (for RAG docs)
 
 ### Estimated Setup Time
-- **Infrastructure setup**: 30-45 minutes
+- **Infrastructure setup**: 5-10 minutes
 - **Data ingestion**: 1-2 hours (depends on Spark job frequency)
 - **FSA installation**: 10-15 minutes
 
@@ -268,11 +249,16 @@ The MCP server can be used directly in VS Code with GitHub Copilot Chat.
 
 **Available MCP Tools:**
 
-1. `get_sparklens_recommendations(application_id)` - Sparklens analysis
-2. `get_fabric_recommendations(application_id)` - Fabric-specific recommendations
-3. `get_application_summary(application_id)` - Application metrics
-4. `get_bad_practice_applications(min_violations)` - Apps with issues
-5. `search_recommendations_by_category(category)` - Search by category
+1. `get_spark_recommendations(application_id)` - SparkLens analysis and recommendations
+2. `get_fabric_recommendations(application_id)` - Fabric-specific optimization guidance
+3. `get_application_metrics(application_id)` - Performance metrics (executor efficiency, GC, skew)
+4. `get_application_metadata(application_id)` - Spark configuration properties and job details
+5. `get_scaling_predictions(application_id)` - What-if scaling scenarios and cost estimates
+6. `get_stage_summary(application_id, stage_id)` - Stage-level performance breakdown
+7. `get_bad_practice_applications(min_violations)` - Find apps with anti-patterns
+8. `search_recommendations_by_category(category)` - Filter by memory/shuffle/join/skew categories
+
+> **💡 Natural Language Queries**: The orchestrator automatically translates your questions into appropriate MCP tool calls. Just ask naturally: "show apps with high GC" → automatically calls `get_bad_practice_applications` with memory category filter.
 
 **Usage in Copilot Chat:**
 
@@ -359,10 +345,10 @@ Simple function-based interface for fast queries:
 
 ### MCP Server (`mcp_server/`)
 
-FastMCP server exposing 5 tools for Spark analysis:
+FastMCP server exposing 8 tools for Spark analysis:
 - **Port**: 8000
 - **Protocol**: SSE (Server-Sent Events)
-- **Tools**: 5 Kusto-backed tools
+- **Tools**: 8 Kusto-backed tools with intelligent query routing
 - **Config**: `.vscode/settings.json`
 
 **Run standalone:**
