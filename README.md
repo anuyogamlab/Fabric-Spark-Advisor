@@ -8,6 +8,12 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 - **Semantic Kernel** for agent orchestration
 - **Chainlit** for interactive chat UI
 
+## 🎥 Demo
+
+https://github.com/anuyogamlab/Fabric-Spark-Advisor/assets/demo.mp4
+
+> **Fabric Spark Advisor in action** - Analyzing Spark applications, retrieving recommendations from Kusto, and providing actionable optimization guidance through conversational AI.
+
 ## 📐 Architecture
 
 ```
