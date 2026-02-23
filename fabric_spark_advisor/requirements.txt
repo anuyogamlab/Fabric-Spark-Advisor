@@ -1,0 +1,6 @@
+# Core dependencies
+gradio>=4.0.0
+httpx>=0.25.0
+
+# Development dependencies (optional)
+# Install with: pip install -r requirements-dev.txt

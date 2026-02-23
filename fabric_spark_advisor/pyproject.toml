@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fabric-spark-advisor"
+version = "0.1.0"
+description = "AI-powered Spark performance analysis for Microsoft Fabric"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["spark", "fabric", "performance", "ai", "ml", "optimization", "kusto"]
+authors = [
+    {name = "Microsoft"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+
+dependencies = [
+    "gradio>=4.0.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/microsoft/fabric-spark-advisor"
+Documentation = "https://github.com/microsoft/fabric-spark-advisor/README.md"
+Repository = "https://github.com/microsoft/fabric-spark-advisor"
+Issues = "https://github.com/microsoft/fabric-spark-advisor/issues"
+
+[tool.setuptools]
+packages = ["fabric_spark_advisor"]
+
+[tool.setuptools.package-data]
+fabric_spark_advisor = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

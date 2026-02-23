@@ -1,0 +1,111 @@
+// ======================================================================
+// FIX SCRIPT - Enable Reprocessing of Apps Missing Recommendations
+// ======================================================================
+// Created: 2026-02-22
+// Purpose: Prepare applications with missing recommendations for reprocessing
+// ======================================================================
+
+// STEP 1: Identify apps to fix (apps with metrics but no recommendations)
+// -----------------------------------------------------------------------
+.set-or-append AppsToReprocess <|
+    let apps_with_metrics = sparklens_metrics | distinct app_id;
+    let apps_with_sparklens_recs = sparklens_recommedations | distinct app_id;
+    let apps_with_fabric_recs = fabric_recommedations | distinct app_id;
+    apps_with_metrics
+    | join kind=leftanti apps_with_sparklens_recs on app_id
+    | join kind=leftanti apps_with_fabric_recs on app_id
+    | project app_id, needs_reprocessing = true, identified_at = now()
+
+// STEP 2: Review the list (DO NOT DELETE YET)
+// -----------------------------------------------------------------------
+AppsToReprocess
+| count
+
+AppsToReprocess
+| take 10
+
+// STEP 3: DELETE EXISTING DATA for apps missing recommendations
+// -----------------------------------------------------------------------
+// CAUTION: This will remove ALL existing data for these apps
+// They will be reprocessed fresh when the analyzer runs next
+// -----------------------------------------------------------------------
+
+// OPTION A: Delete from metadata only (analyzer will skip if in errors table)
+// Uncomment to execute:
+/*
+.delete table sparklens_metadata records <|
+    AppsToReprocess
+    | join kind=inner sparklens_metadata on $left.app_id == $right.applicationId
+*/
+
+// OPTION B: Delete from errors table (if apps failed)
+// Uncomment to execute:
+/*
+.delete table sparklens_errors records <|
+    AppsToReprocess
+    | join kind=inner sparklens_errors on $left.app_id == $right.applicationID
+*/
+
+// OPTION C: Clean deletion - remove EVERYTHING for reprocessing
+// This is the safest approach for fixing incomplete processing
+// Uncomment ALL of these to execute:
+/*
+.delete table sparklens_metadata records <|
+    AppsToReprocess
+    | join kind=inner sparklens_metadata on $left.app_id == $right.applicationId
+
+.delete table sparklens_metrics records <|
+    AppsToReprocess
+    | join kind=inner sparklens_metrics on app_id
+
+.delete table sparklens_summary records <|
+    AppsToReprocess
+    | join kind=inner sparklens_summary on app_id
+
+.delete table sparklens_predictions records <|
+    AppsToReprocess
+    | join kind=inner sparklens_predictions on app_id
+
+.delete table sparklens_errors records <|
+    AppsToReprocess
+    | join kind=inner sparklens_errors on $left.app_id == $right.applicationID
+
+// Note: Don't need to delete from recommendation tables since they're empty
+*/
+
+// STEP 4: Verify deletion (run after uncommenting Step 3)
+// -----------------------------------------------------------------------
+// After deletion, these apps should NO LONGER appear in the processed IDs query
+// used by the analyzer's anti-join
+/*
+union isfuzzy=true
+(
+    sparklens_errors
+    | project applicationID
+    | distinct applicationID
+),
+(
+    sparklens_metadata
+    | project applicationId
+    | distinct applicationID=applicationId
+)
+| where applicationID in (AppsToReprocess)
+| count  // Should return 0 after deletion
+*/
+
+// STEP 5: Re-run the analyzer notebook
+// -----------------------------------------------------------------------
+// The analyzer's anti-join will now allow these apps to be reprocessed:
+//
+// processed_ids_df = (
+//     processed_ids_df_raw
+//     .select(...)
+//     .filter(col("applicationId").isNotNull())
+//     .distinct()
+// )
+// 
+// event_log_df = event_log_df.join(
+//     processed_ids_df,
+//     event_log_df["applicationId_raw"] == processed_ids_df["applicationId"],
+//     how="left_anti"  // <-- This excludes already-processed apps
+// )

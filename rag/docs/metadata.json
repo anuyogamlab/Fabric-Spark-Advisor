@@ -1,0 +1,30 @@
+[
+  {
+    "filename": "spark_best_practices_overview.md",
+    "source_url": "https://learn.microsoft.com/en-us/fabric/data-engineering/spark-best-practices-overview",
+    "category": ["overview", "best-practices"],
+    "last_fetched": "2026-02-22",
+    "description": "Overview of Fabric Spark best practices covering performance, security, cost management, and monitoring"
+  },
+  {
+    "filename": "resource_profile_configurations.md",
+    "source_url": "https://learn.microsoft.com/en-us/fabric/data-engineering/configure-resource-profile-configurations",
+    "category": ["performance", "configuration"],
+    "last_fetched": "2026-02-22",
+    "description": "Configure resource profiles for read-heavy, write-heavy, and custom Spark workloads including defaults and configuration methods"
+  },
+  {
+    "filename": "driver_mode_snapshot.md",
+    "source_url": "https://learn.microsoft.com/en-us/fabric/data-engineering/driver-mode-snapshot",
+    "category": ["performance", "delta", "configuration"],
+    "last_fetched": "2026-02-22",
+    "description": "Driver Mode Snapshot for loading Delta table snapshots in driver process with configuration options, size limits, and troubleshooting"
+  },
+  {
+    "filename": "lakehouse_table_maintenance.md",
+    "source_url": "https://learn.microsoft.com/en-us/fabric/data-engineering/lakehouse-table-maintenance",
+    "category": ["maintenance", "storage", "delta"],
+    "last_fetched": "2026-02-22",
+    "description": "Table maintenance operations including Optimize, V-Order, and Vacuum with retention thresholds and best practices"
+  }
+]

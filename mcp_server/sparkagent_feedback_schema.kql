@@ -1,0 +1,86 @@
+// ============================================================================
+// SparkAgent Feedback Table Schema
+// ============================================================================
+// This table captures user feedback on AI-generated recommendations
+// to enable continuous learning and improvement of the agent's responses.
+//
+// Usage:
+//   Run this command in your Kusto/Eventhouse database to create the table.
+//
+// Learning Strategy:
+//   See feedback_learning_strategy.md for details on how to use this data
+//   to improve recommendations via RAG, prompt engineering, and fine-tuning.
+// ============================================================================
+
+.create table sparkagent_feedback (
+    timestamp: datetime,
+    session_id: string,
+    application_id: string,
+    query_text: string,
+    query_intent: string,
+    actual_result_generated: string,
+    feedback_type: string,
+    feedback_comment: string,
+    recommendation_count: int,
+    source_kusto_count: int,
+    source_rag_count: int,
+    source_llm_count: int
+)
+
+// Create a policy to retain feedback data for 1 year
+.alter table sparkagent_feedback policy retention softdelete = 365d
+
+// Create indexes for common query patterns
+.create table sparkagent_feedback ingestion json mapping 'FeedbackMapping' @'[
+    {"column":"timestamp", "path":"$.timestamp"},
+    {"column":"session_id", "path":"$.session_id"},
+    {"column":"application_id", "path":"$.application_id"},
+    {"column":"query_text", "path":"$.query_text"},
+    {"column":"query_intent", "path":"$.query_intent"},
+    {"column":"actual_result_generated", "path":"$.actual_result_generated"},
+    {"column":"feedback_type", "path":"$.feedback_type"},
+    {"column":"feedback_comment", "path":"$.feedback_comment"},
+    {"column":"recommendation_count", "path":"$.recommendation_count"},
+    {"column":"source_kusto_count", "path":"$.source_kusto_count"},
+    {"column":"source_rag_count", "path":"$.source_rag_count"},
+    {"column":"source_llm_count", "path":"$.source_llm_count"}
+]'
+
+// ============================================================================
+// Example Queries for Feedback Analysis
+// ============================================================================
+
+// 1. Get overall feedback distribution
+// sparkagent_feedback
+// | summarize count() by feedback_type
+// | order by count_ desc
+
+// 2. Find patterns in "NOT HELPFUL" feedback
+// sparkagent_feedback
+// | where feedback_type == "NOT_HELPFUL"
+// | summarize count() by feedback_comment
+// | order by count_ desc
+
+// 3. Analyze feedback by query intent
+// sparkagent_feedback
+// | summarize 
+//     helpful = countif(feedback_type == "HELPFUL"),
+//     not_helpful = countif(feedback_type == "NOT_HELPFUL"),
+//     partial = countif(feedback_type == "PARTIAL")
+//     by query_intent
+// | extend helpfulness_rate = round(100.0 * helpful / (helpful + not_helpful + partial), 1)
+// | order by helpfulness_rate asc
+
+// 4. Identify problematic LLM-generated responses
+// sparkagent_feedback
+// | where source_llm_count > 0 and feedback_type != "HELPFUL"
+// | project timestamp, application_id, query_text, feedback_comment, actual_result_generated
+// | take 100
+
+// 5. Track improvement over time
+// sparkagent_feedback
+// | summarize 
+//     helpful_rate = 100.0 * countif(feedback_type == "HELPFUL") / count()
+//     by bin(timestamp, 1d)
+// | order by timestamp desc
+// | take 30

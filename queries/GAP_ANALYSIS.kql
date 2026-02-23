@@ -1,0 +1,81 @@
+// ======================================================================
+// GAP ANALYSIS - Apps with Metrics but No Recommendations
+// ======================================================================
+// Purpose: Identify which applications have been partially processed
+// ======================================================================
+
+// Apps that have duration metrics (basic telemetry exists)
+let apps_with_metrics = sparklens_metrics
+    | where metric == "Application Duration (sec)"
+    | distinct app_id
+    | project app_id, has_metrics = true;
+
+// Apps that have recommendations (fully analyzed)
+let apps_with_recs = sparklens_recommedations
+    | distinct app_id
+    | project app_id, has_recommendations = true;
+
+// LEFT JOIN to find apps with metrics but NO recommendations
+apps_with_metrics
+| join kind=leftouter apps_with_recs on app_id
+| where isnull(has_recommendations)
+| join kind=inner (
+    sparklens_metrics
+    | where metric == "Application Duration (sec)"
+    | project app_id, duration_sec = value
+) on app_id
+| project 
+    app_id,
+    duration_sec,
+    status = "⚠️ Metrics exist but NO recommendations"
+| order by duration_sec desc
+| take 20
+
+// ======================================================================
+// Summary Statistics
+// ======================================================================
+// How many apps are in each state?
+// ======================================================================
+
+sparklens_metrics
+| where metric == "Application Duration (sec)"
+| distinct app_id
+| summarize total_apps_with_metrics = count()
+| extend dataset = "Apps with Metrics"
+
+| union (
+    sparklens_recommedations
+    | distinct app_id
+    | summarize total_apps_with_recommendations = count()
+    | extend dataset = "Apps with Recommendations"
+)
+
+| union (
+    fabric_recommedations
+    | distinct app_id
+    | summarize total_apps_with_fabric_recs = count()
+    | extend dataset = "Apps with Fabric Recommendations"
+)
+
+// ======================================================================
+// App ID Timestamp Analysis
+// ======================================================================
+// Extract timestamp from app ID to see if newer apps are missing
+// Format: application_TIMESTAMP_INDEX
+// ======================================================================
+
+let parse_app_timestamp = (app_id: string) {
+    tolong(split(app_id, "_")[1])
+};
+
+sparklens_metrics
+| where metric == "Application Duration (sec)"
+| extend timestamp_part = parse_app_timestamp(app_id)
+| join kind=leftouter (
+    sparklens_recommedations
+    | distinct app_id
+    | extend has_recs = true
+) on app_id
+| extend status = iff(isnull(has_recs), "Missing Recs", "Has Recs")
+| summarize count() by status, bin(timestamp_part, 1000000)
+| order by timestamp_part desc

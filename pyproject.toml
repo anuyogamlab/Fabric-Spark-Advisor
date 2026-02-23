@@ -1,0 +1,105 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spark-recommender-mcp"
+version = "0.1.0"
+description = "AI-powered Apache Spark optimization assistant for Microsoft Fabric"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["spark", "fabric", "performance", "ai", "optimization", "kusto", "mcp"]
+authors = [
+    {name = "Microsoft"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "fastmcp==0.2.0",
+    "semantic-kernel==1.1.0",
+    "azure-kusto-data==4.4.0",
+    "azure-search-documents==11.4.0",
+    "azure-identity==1.15.0",
+    "openai==1.12.0",
+    "chainlit==1.0.0",
+    "python-dotenv==1.0.0",
+    "uvicorn==0.27.0",
+    "starlette==0.36.0",
+    "sse-starlette==2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.5.0",
+    "isort>=5.12.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/microsoft/spark-recommender-mcp"
+Documentation = "https://github.com/microsoft/spark-recommender-mcp/README.md"
+Repository = "https://github.com/microsoft/spark-recommender-mcp"
+Issues = "https://github.com/microsoft/spark-recommender-mcp/issues"
+
+[tool.setuptools]
+packages = ["agent", "mcp_server", "ui", "rag"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["agent", "mcp_server", "ui", "rag"]
+omit = ["tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

@@ -1,0 +1,96 @@
+// ======================================================================
+// DIAGNOSTIC QUERIES - Find Data Pipeline Issues
+// ======================================================================
+// Created: 2026-02-22
+// Purpose: Identify applications with incomplete analyzer processing
+// ======================================================================
+
+// ------------------------------------------------------------
+// Query 1: Applications with metrics but NO recommendations
+// ------------------------------------------------------------
+// These apps were partially processed - basic metrics written
+// but recommendation generation failed or was skipped
+// ------------------------------------------------------------
+let apps_with_metrics = sparklens_metrics
+    | distinct app_id;
+let apps_with_sparklens_recs = sparklens_recommedations
+    | distinct app_id;
+let apps_with_fabric_recs = fabric_recommedations
+    | distinct app_id;
+apps_with_metrics
+| join kind=leftanti apps_with_sparklens_recs on app_id
+| join kind=leftanti apps_with_fabric_recs on app_id
+| join kind=inner (
+    sparklens_metrics
+    | where metric == "Application Duration (sec)"
+    | project app_id, duration_sec = value
+) on app_id
+| order by duration_sec desc
+| project app_id, duration_sec, issue = "Missing both SparkLens and Fabric recommendations"
+
+// ------------------------------------------------------------
+// Query 2: Applications with SparkLens recs but NO Fabric recs
+// ------------------------------------------------------------
+// Fabric recommendations are generated in the analyzer wrapper
+// Missing Fabric recs indicates wrapper didn't execute
+// ------------------------------------------------------------
+let apps_with_sparklens = sparklens_recommedations
+    | distinct app_id;
+let apps_with_fabric = fabric_recommedations
+    | distinct app_id;
+apps_with_sparklens
+| join kind=leftanti apps_with_fabric on app_id
+| project app_id, issue = "Missing Fabric recommendations only"
+
+// ------------------------------------------------------------
+// Query 3: Applications with Fabric recs but NO SparkLens recs
+// ------------------------------------------------------------
+// Should never happen - SparkLens recs are generated first
+// This indicates a serious pipeline bug
+// ------------------------------------------------------------
+let apps_with_sparklens = sparklens_recommedations
+    | distinct app_id;
+let apps_with_fabric = fabric_recommedations
+    | distinct app_id;
+apps_with_fabric
+| join kind=leftanti apps_with_sparklens on app_id
+| project app_id, issue = "ANOMALY: Fabric recs exist but SparkLens missing"
+
+// ------------------------------------------------------------
+// Query 4: Count of recommendation records per application
+// ------------------------------------------------------------
+// Healthy apps should have:
+// - Multiple SparkLens recommendation lines (4-10+ typically)
+// - 1 Fabric recommendation record (formatted as single block)
+// ------------------------------------------------------------
+let sparklens_counts = sparklens_recommedations
+    | summarize sparklens_rec_count = count() by app_id;
+let fabric_counts = fabric_recommedations
+    | summarize fabric_rec_count = count() by app_id;
+sparklens_counts
+| join kind=fullouter fabric_counts on app_id
+| project 
+    app_id = coalesce(app_id, app_id1),
+    sparklens_rec_count = coalesce(sparklens_rec_count, 0),
+    fabric_rec_count = coalesce(fabric_rec_count, 0),
+    health = case(
+        sparklens_rec_count > 0 and fabric_rec_count > 0, "✅ Complete",
+        sparklens_rec_count > 0 and fabric_rec_count == 0, "⚠️ Missing Fabric",
+        sparklens_rec_count == 0 and fabric_rec_count > 0, "❌ ANOMALY",
+        "❌ No Recommendations"
+    )
+| order by health asc, app_id desc
+
+// ------------------------------------------------------------
+// Query 5: Sample a recommendation to check formatting
+// ------------------------------------------------------------
+// The new analyzer should write recommendations as a single
+// formatted block (not individual lines)
+// ------------------------------------------------------------
+sparklens_recommedations
+| take 1
+| project app_id, recommendation_preview = substring(recommendation, 0, 500)
+
+fabric_recommedations
+| take 1
+| project app_id, recommendation_preview = substring(recommendation, 0, 500)
