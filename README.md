@@ -93,10 +93,12 @@ User Query → Intent Detection → Orchestrator
                           User (formatted)
 ```
 
-**Key Architecture Principle:**
-- ✅ **ALL data access** flows through MCP tools (unified interface)
-- ✅ **NO direct** Kusto/Search queries from Orchestrator
-- ✅ **Consistent** authentication and error handling across all interfaces
+**Key Architecture Principles:**
+- ✅ **Unified Data Access** - ALL queries flow through MCP tools for consistency
+- ✅ **No Direct Queries** - Orchestrator never bypasses MCP layer
+- ✅ **Enterprise Auth** - Multi-fallback authentication across all interfaces
+- 📊 **RAG Efficiency** - ~1000 token cost for documentation context justified by improved validation quality
+- 💰 **ROI First** - Preventing one production incident saves far more than token costs
 
 ## 🚦 Quick Start
 
