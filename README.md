@@ -89,7 +89,7 @@ User Query → Intent Detection → Orchestrator
                          (validation & ranking)
                                     ▼
                           Validated Results
-                                    ▓
+                                    ▼
                           User (formatted)
 ```
 
@@ -100,7 +100,60 @@ User Query → Intent Detection → Orchestrator
 - 📊 **RAG Efficiency** - ~1000 token cost for documentation context justified by improved validation quality
 - 💰 **ROI First** - Preventing one production incident saves far more than token costs
 
-## 🚦 Quick Start
+## � Prerequisites
+
+**Before installing FSA, you need the Fabric Spark Monitoring infrastructure:**
+
+### Required Infrastructure
+
+This MCP tool **consumes** SparkLens data and recommendations. You must first set up the data pipeline using the official **Microsoft Fabric Spark Monitoring** toolkit:
+
+🔗 **[Fabric Spark Monitoring Setup](https://github.com/microsoft/fabric-toolbox/tree/main/monitoring/fabric-spark-monitoring)**
+
+**What this sets up:**
+1. **Eventhouse/Kusto Database** - Stores SparkLens metrics, Fabric recommendations, feedback data
+2. **Eventstream** - Real-time ingestion of Spark logs from Fabric Workspaces
+3. **Real-Time Dashboard** - KQL-based monitoring and visualization
+4. **Recommender Notebook** - Generates Fabric-specific optimization recommendations
+5. **Table Schemas** - Pre-configured tables:
+   - `sparklens_recommedations` (Kusto recommendation data)
+   - `fabric_recommedations` (Fabric-specific guidance)
+   - `sparklens_metrics` (performance metrics)
+   - `sparklens_metadata` (Spark config properties)
+   - `sparklens_predictions` (scaling what-if scenarios)
+   - `sparkagent_feedback` (user feedback history)
+
+### Setup Steps
+
+1. **Follow the Fabric Toolbox guide** to deploy:
+   - Kusto database with monitoring tables
+   - Eventstream configured for your Fabric workspaces
+   - Recommender notebook scheduled to run periodically
+
+2. **Verify data ingestion:**
+   ```kql
+   sparklens_recommedations
+   | where ingestion_time() > ago(1d)
+   | count
+   ```
+   You should see recommendation records for your Spark applications.
+
+3. **Note your connection details** (needed for `.env` configuration):
+   - Kusto cluster URI
+   - Database name
+   - Azure OpenAI endpoint (if using AI features)
+   - Azure AI Search endpoint (for RAG docs)
+
+### Estimated Setup Time
+- **Infrastructure setup**: 30-45 minutes
+- **Data ingestion**: 1-2 hours (depends on Spark job frequency)
+- **FSA installation**: 10-15 minutes
+
+Once the infrastructure is running and data is flowing, proceed with FSA installation below.
+
+---
+
+## �🚦 Quick Start
 
 ### 1️⃣ Install Dependencies
 
