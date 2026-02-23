@@ -1,4 +1,9 @@
-# 🚀 Spark Recommender Agent
+# � Fabric Spark Advisor (FSA)
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Azure OpenAI](https://img.shields.io/badge/Azure-OpenAI-blue)](https://azure.microsoft.com/en-us/products/ai-services/openai-service)
+[![Microsoft Fabric](https://img.shields.io/badge/Microsoft-Fabric-orange)](https://www.microsoft.com/en-us/microsoft-fabric)
 
 AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 - **MCP (Model Context Protocol)** for tool integration
@@ -13,6 +18,19 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 https://github.com/anuyogamlab/Fabric-Spark-Advisor/assets/demo.mp4
 
 > **Fabric Spark Advisor in action** - Analyzing Spark applications, retrieving recommendations from Kusto, and providing actionable optimization guidance through conversational AI.
+
+## ✨ Key Features
+
+- 🎯 **Evidence-First Analysis** - Kusto data always shown verbatim, never modified or re-scored
+- 🔍 **SparkLens Integration** - Deep Spark execution analysis with performance metrics
+- 📚 **RAG-Enhanced Context** - Official Microsoft Fabric documentation retrieval
+- 🤖 **AI Judge** - GPT-4o validates and ranks recommendations with confidence scoring
+- 💬 **Conversational Interface** - Natural language queries with intent detection
+- 📊 **Multi-Interface Support** - Chainlit UI, VS Code Copilot, Fabric Notebooks, Python API
+- 🔄 **Feedback Loop** - Learn from user ratings to improve future suggestions
+- ⚡ **7 MCP Tools** - Unified data access across all interfaces
+- 🎨 **Professional UI** - Interactive widgets, rich formatting, clickable feedback
+- 🔐 **Enterprise Ready** - Multi-auth fallback, Azure integration, secure credential handling
 
 ## 📐 Architecture
 
@@ -71,8 +89,8 @@ User Query → Intent Detection → Orchestrator
 
 ```bash
 # Clone the repository
-git clone <your-repo>
-cd spark-recommender
+git clone https://github.com/anuyogamlab/Fabric-Spark-Advisor.git
+cd Fabric-Spark-Advisor
 
 # Install Python dependencies
 pip install -r requirements.txt
