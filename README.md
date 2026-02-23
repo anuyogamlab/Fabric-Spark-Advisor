@@ -85,7 +85,7 @@ User Query → Intent Detection → Orchestrator
           │                         │                      │
           ▼                         ▼                      ▼
    Azure Kusto DB          Azure AI Search        Azure OpenAI
-   (SparkLens data)       (Fabric docs)           (GPT-4o)
+   (Sparklogs/insights data) (Fabric docs)           (GPT-4o)
           │                         │                      │
           └─────────────────────────┼──────────────────────┘
                                     ▼
