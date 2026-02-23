@@ -1,4 +1,4 @@
-# � Fabric Spark Advisor (FSA)
+# ⚡ Fabric Spark Advisor (FSA)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -258,7 +258,7 @@ The MCP server can be used directly in VS Code with GitHub Copilot Chat.
 7. `get_bad_practice_applications(min_violations)` - Find apps with anti-patterns
 8. `search_recommendations_by_category(category)` - Filter by memory/shuffle/join/skew categories
 
-> **💡 Natural Language Queries**: The orchestrator automatically translates your questions into appropriate MCP tool calls. Just ask naturally: "show apps with high GC" → automatically calls `get_bad_practice_applications` with memory category filter.
+> **💡 Natural Language Queries**: The orchestrator automatically translates your questions into appropriate MCP tool calls. 
 
 **Usage in Copilot Chat:**
 
