@@ -15,7 +15,11 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 
 ## 🎥 Demo
 
-https://github.com/anuyogamlab/Fabric-Spark-Advisor/assets/demo.mp4
+<p align="center">
+  <video src="https://raw.githubusercontent.com/anuyogamlab/Fabric-Spark-Advisor/main/assets/demo.mp4" controls width="80%">
+    Your browser does not support the video tag. <a href="https://raw.githubusercontent.com/anuyogamlab/Fabric-Spark-Advisor/main/assets/demo.mp4">Download demo video</a>
+  </video>
+</p>
 
 > **Fabric Spark Advisor in action** - Analyzing Spark applications, retrieving recommendations from Kusto, and providing actionable optimization guidance through conversational AI.
 
