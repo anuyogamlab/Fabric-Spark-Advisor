@@ -70,16 +70,21 @@ try {
     exit 1
 }
 
-# Login to Azure
+# Login to Azure (skip if already authenticated, e.g. in Cloud Shell)
 Write-Host ""
-Write-Host "[AZURE] Logging in..." -ForegroundColor Cyan
-az login --output none
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] Azure login failed" -ForegroundColor Red
-    exit 1
+Write-Host "[AZURE] Checking Azure authentication..." -ForegroundColor Cyan
+$currentAccount = az account show --output none 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "[OK] Already logged into Azure" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] Not logged in, running az login..." -ForegroundColor Yellow
+    az login --output none
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] Azure login failed" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[OK] Logged into Azure" -ForegroundColor Green
 }
-Write-Host "[OK] Logged into Azure" -ForegroundColor Green
 
 # Create resources
 if (-not $DeployOnly) {
