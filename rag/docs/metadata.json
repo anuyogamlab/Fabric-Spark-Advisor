@@ -26,5 +26,12 @@
     "category": ["maintenance", "storage", "delta"],
     "last_fetched": "2026-02-22",
     "description": "Table maintenance operations including Optimize, V-Order, and Vacuum with retention thresholds and best practices"
+  },
+  {
+    "filename": "delta_optimization_and_vorder.md",
+    "source_url": "https://learn.microsoft.com/en-us/fabric/data-engineering/delta-optimization-and-v-order",
+    "category": ["performance", "delta", "optimization", "vorder"],
+    "last_fetched": "2026-03-01",
+    "description": "V-Order write-time Parquet optimization for read-heavy workloads, Optimize Write, Z-Order vs V-Order, Low Shuffle Merge, and Delta table maintenance patterns"
   }
 ]

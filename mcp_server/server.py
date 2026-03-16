@@ -311,6 +311,99 @@ def search_recommendations_by_category(category: str) -> dict[str, Any]:
     }
 
 
+@mcp.tool()
+def get_application_trend(application_name: str, days: int = 7) -> dict[str, Any]:
+    """
+    Get the daily performance trend for a Spark application over the last N days.
+
+    Useful for answering questions like:
+      - "Is this application getting worse over time?"
+      - "Show me the performance trend for my-etl-pipeline over the last 14 days"
+      - "Has efficiency improved since last week?"
+
+    Parameters
+    ----------
+    application_name : str
+        Full or partial application name (matched with `has` operator in KQL).
+    days : int, optional
+        Number of days to look back (default: 7, max recommended: 30).
+
+    Returns
+    -------
+    dict with keys:
+        application_name  – name searched
+        days              – lookback window
+        data_points       – number of daily rows returned
+        trend             – list of daily metrics:
+                            run_date, app_id, application_name,
+                            eff_pct, gc_overhead_pct, task_skew_ratio,
+                            duration_min, performance_score, health_label
+        trend_direction   – "IMPROVING" | "DEGRADING" | "STABLE" | "INSUFFICIENT_DATA"
+        latest_score      – most recent performance_score (float)
+        earliest_score    – oldest performance_score in window (float)
+    """
+    client = get_kusto_client()
+    rows = client.get_application_trend(application_name, days)
+
+    trend_direction = "INSUFFICIENT_DATA"
+    latest_score = None
+    earliest_score = None
+
+    if len(rows) >= 2:
+        scores = [r.get("performance_score", 0) for r in rows]
+        earliest_score = scores[0]
+        latest_score = scores[-1]
+        delta = latest_score - earliest_score
+        if delta > 5:
+            trend_direction = "IMPROVING"
+        elif delta < -5:
+            trend_direction = "DEGRADING"
+        else:
+            trend_direction = "STABLE"
+    elif len(rows) == 1:
+        latest_score = rows[0].get("performance_score")
+        earliest_score = latest_score
+        trend_direction = "INSUFFICIENT_DATA"
+
+    return {
+        "application_name": application_name,
+        "days": days,
+        "data_points": len(rows),
+        "trend_direction": trend_direction,
+        "latest_score": latest_score,
+        "earliest_score": earliest_score,
+        "trend": rows
+    }
+
+
+@mcp.tool()
+def execute_kql_query(query: str) -> dict[str, Any]:
+    """
+    Execute an arbitrary KQL query against the Kusto (Eventhouse) database.
+
+    Use this as the generic data-access tool when no named tool covers the query.
+    Results are returned as a list of row dicts under the key "rows".
+
+    Args:
+        query: A valid KQL query string targeting tables in the SparkAdvisor database
+               (sparklens_metrics, sparklens_recommedations, fabric_recommedations,
+                sparklens_metadata, sparklens_predictions, sparklens_summary).
+
+    Returns:
+        Dictionary with:
+          - query:      the KQL that was executed
+          - row_count:  number of rows returned
+          - rows:       list of dicts (one per result row)
+          - error:      present only if the query failed
+    """
+    client = get_kusto_client()
+    try:
+        rows = client.query_to_dict_list(query)
+        return {"query": query, "row_count": len(rows), "rows": rows}
+    except Exception as e:
+        return {"query": query, "error": str(e), "rows": []}
+
+
 # ==================== Server Modes ====================
 
 def run_http_server(host: str = "0.0.0.0", port: int = 8000):
@@ -328,6 +421,7 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8000):
     print("   7. get_bad_practice_applications(min_violations)")
     print("   8. get_application_summary(application_id)")
     print("   9. search_recommendations_by_category(category)")
+    print("  10. get_application_trend(application_name, days=7) - performance over time")
     print("\n🔗 Ready for MCP client connections via SSE")
     
     # FastMCP run is synchronous
@@ -349,6 +443,7 @@ def run_in_memory():
     print("   - get_bad_practice_applications(min_violations)")
     print("   - get_application_summary(application_id)")
     print("   - search_recommendations_by_category(category)")
+    print("   - get_application_trend(application_name, days=7)")
     
     # Return the tools for notebook use
     return {
@@ -361,6 +456,7 @@ def run_in_memory():
         "get_bad_practice_applications": get_bad_practice_applications,
         "get_application_summary": get_application_summary,
         "search_recommendations_by_category": search_recommendations_by_category,
+        "get_application_trend": get_application_trend,
         "kusto_client": get_kusto_client()
     }
 

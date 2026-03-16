@@ -9,16 +9,19 @@ from typing import List, Dict, Any, Optional
 from collections import defaultdict
 from datetime import datetime, timedelta
 from semantic_kernel import Kernel
-from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, AzureChatPromptExecutionSettings
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.contents import ChatHistory
 from semantic_kernel.functions import kernel_function
 from dotenv import load_dotenv
 
 from agent.mcp_client_wrapper import get_mcp_client
+from agent.plugin import SparkAdvisorPlugin
 from agent.prompts import (
     ORCHESTRATOR_SYSTEM_PROMPT,
     CHAT_SYSTEM_PROMPT,
+    SKILL_LAYER_SYSTEM_PROMPT,
     LLM_RECOMMENDATION_PROMPT,
     ANALYSIS_SUMMARY_PROMPT,
     BAD_PRACTICES_PROMPT,
@@ -54,10 +57,19 @@ class SparkAdvisorOrchestrator:
         # Initialize MCP client for ALL data access (Kusto, RAG, Judge)
         # This solves the m×n problem: one client → one MCP server → multiple backends
         self.mcp_client = get_mcp_client()
-        
+
+        # Register the SparkAdvisor plugin so FunctionChoiceBehavior.Auto() can route
+        # user queries to the correct skill without any if/elif routing logic.
+        self.kernel.add_plugin(
+            SparkAdvisorPlugin(self.mcp_client),
+            plugin_name="SparkAdvisor"
+        )
+
         # Chat history for conversational interactions
+        # Uses the skill-layer system prompt so the LLM knows how to interpret
+        # the JSON data returned by each @kernel_function.
         self.chat_history = ChatHistory()
-        self.chat_history.add_system_message(CHAT_SYSTEM_PROMPT)
+        self.chat_history.add_system_message(SKILL_LAYER_SYSTEM_PROMPT)
         
         # Session management for conversational context
         self.sessions = defaultdict(lambda: {
@@ -122,8 +134,22 @@ class SparkAdvisorOrchestrator:
         
     async def analyze_application(self, application_id: str, session_id: str = "default") -> Dict[str, Any]:
         """
-        Full pipeline analysis of a Spark application.
-        
+        Full 7-step pipeline analysis for direct/API callers.
+
+        NOTE: This is NOT the same as the plugin's analyze_app() skill.
+
+        - This method: fetches → RAG-augments → LLM-judges → returns a validated Dict
+          with structured recommendations, source tags, and confidence scores.
+        - Plugin skill (analyze_app): fetches raw Kusto data → returns a flat JSON
+          blob for the LLM to format inside the chat turn.
+
+        Use THIS method when calling from outside the chat loop, e.g.:
+          - Batch processing pipelines
+          - Chainlit on_message handler for /analyze slash-commands
+          - External API endpoints that need the fully-validated recommendation Dict
+
+        Use the plugin skill for all conversational chat() interactions.
+
         Steps:
         1. Get Sparklens recommendations from Kusto
         2. Get application summary from Kusto
@@ -132,10 +158,10 @@ class SparkAdvisorOrchestrator:
         5. Combine all results with source tags
         6. Pass to LLM judge for validation
         7. Return final validated recommendations
-        
+
         Args:
             application_id: Spark application ID to analyze
-            
+
         Returns:
             Dict with validated recommendations, summary, and metadata
         """
@@ -261,30 +287,63 @@ class SparkAdvisorOrchestrator:
             except Exception as e:
                 print(f"    ⚠️  LLM generation failed: {e}")
         
-        # Step 5: Combine all results with source tags
-        all_recommendations = sparklens_recs + fabric_recs + rag_recs + llm_recs
-        print(f"  ├─ Combined {len(all_recommendations)} total recommendations")
-        
-        # Step 6: Pass to LLM judge for validation
-        print("  ├─ Validating with LLM judge...")
+        # Step 5: Separate Kusto (ground truth) from supplemental (RAG/LLM)
+        non_kusto_recs = rag_recs + llm_recs
+        print(f"  ├─ Kusto recs (ground truth): {len(sparklens_recs + fabric_recs)}, "
+              f"non-Kusto (Judge input): {len(non_kusto_recs)}")
+
+        # Step 6: Judge validates ONLY RAG/LLM recs; Kusto is passed as read-only reference
+        print("  ├─ Validating with LLM judge (RAG/LLM only — Kusto is source of truth)...")
         validated_result = {}
+        non_kusto_validated = []
         try:
-            validated_result = self.mcp_client.validate_recommendations(
-                application_id=application_id,
-                recommendations=all_recommendations,
-                application_context=app_summary
-            )
-            print(f"    ✓ Validation complete ({validated_result.get('overall_health', 'unknown')} health)")
+            # Build judge context: app metrics + Kusto texts as reference (not to validate)
+            judge_context = dict(app_summary)
+            kusto_texts = [r["text"] for r in sparklens_recs + fabric_recs if r.get("text")]
+            if kusto_texts:
+                judge_context["kusto_recs_for_reference"] = kusto_texts
+
+            if non_kusto_recs:
+                validated_result = self.mcp_client.validate_recommendations(
+                    application_id=application_id,
+                    recommendations=non_kusto_recs,
+                    application_context=judge_context if judge_context else None
+                )
+                non_kusto_validated = validated_result.get("validated_recommendations", non_kusto_recs)
+                print(f"    ✓ Validation complete ({validated_result.get('overall_health', 'unknown')} health)")
+            else:
+                validated_result = {
+                    "validated_recommendations": [],
+                    "overall_health": app_summary.get("health_status", "unknown"),
+                    "summary": "No supplemental recommendations to validate."
+                }
+                print("    ✓ No RAG/LLM recs to validate — skipping Judge")
         except Exception as e:
             print(f"    ⚠️  Judge validation failed: {e}")
-            # Fallback to unvalidated recommendations
             validated_result = {
-                "validated_recommendations": all_recommendations,
+                "validated_recommendations": [],
                 "overall_health": "unknown",
-                "summary": "Validation failed, returning raw recommendations",
+                "summary": "Validation failed, returning raw supplemental recommendations.",
                 "application_id": application_id
             }
-        
+            non_kusto_validated = non_kusto_recs
+
+        # Kusto recs are ground truth — prepend verbatim (Judge never touched them)
+        kusto_passthrough = [
+            {
+                "recommendation": rec["text"],
+                "source": "kusto",
+                "confidence": "high",
+                "priority": 1,
+                "reasoning": "Verbatim from Kusto telemetry — source of truth, not modified by Judge",
+                "action": "",
+                "is_generic": False,
+                "contradicts": []
+            }
+            for rec in sparklens_recs + fabric_recs
+        ]
+        validated_result["validated_recommendations"] = kusto_passthrough + non_kusto_validated
+
         # Step 7: Return final result
         validated_result["application_summary"] = app_summary
         validated_result["source_counts"] = {
@@ -622,45 +681,57 @@ class SparkAdvisorOrchestrator:
             except Exception as e:
                 print(f"    ⚠️  Metrics fetch failed: {e}")
             
-            # Extract current duration from predictions (1.0x baseline) instead of metrics table
-            # because SparkLens predictions use a different duration calculation
-            current_duration = 0
+            # Use the ACTUAL measured Application Duration from sparklens_metrics as source of truth.
+            # SparkLens predictions (estimated_duration at 1.0x) are a theoretical model estimate
+            # and can diverge significantly from the real wall-clock time — do NOT use them as baseline.
             current_executors = metrics.get("executor_count", 0)
+            current_duration = metrics.get("duration_sec", 0)
             
             if predictions:
-                # Find the baseline (1.0x or current) prediction
+                # Pull executor count from the 1.0x prediction row (more reliable than metrics)
                 for pred in predictions:
                     multiplier_str = str(pred.get('executor_multiplier', ''))
                     if '1.0x' in multiplier_str or 'Current' in multiplier_str:
-                        # Parse duration from estimated_duration field
+                        current_executors = pred.get('executor_count', current_executors)
+                        break
+            
+            # Final fallback: if metrics had no duration, parse from predictions 1.0x row
+            if current_duration == 0 and predictions:
+                for pred in predictions:
+                    multiplier_str = str(pred.get('executor_multiplier', ''))
+                    if '1.0x' in multiplier_str or 'Current' in multiplier_str:
                         duration_str = pred.get('estimated_duration', '')
                         if duration_str:
-                            # Convert "16m 52s" format to seconds
                             parts = duration_str.replace('m', '').replace('s', '').strip().split()
                             if len(parts) == 2:
                                 current_duration = int(parts[0]) * 60 + int(parts[1])
                             elif 'm' in duration_str and 's' not in duration_str:
                                 current_duration = int(parts[0]) * 60
-                        current_executors = pred.get('executor_count', current_executors)
                         break
-            
-            # Fallback to metrics table if not found in predictions
-            if current_duration == 0:
-                current_duration = metrics.get("duration_sec", 0)
             
             driver_time_pct = metrics.get("driver_time_pct", 0)
             executor_efficiency = metrics.get("executor_efficiency", 0) * 100  # Convert to %
+            executor_wall_clock_sec = metrics.get("executor_wall_clock_sec", 0)
+            driver_wall_clock_sec = metrics.get("driver_wall_clock_sec", 0)
             
             print(f"    ✓ Current state: {current_duration}s ({current_duration/60:.1f}m), {current_executors} executors, {driver_time_pct:.1f}% driver time")
             
             # Step 4: Generate LLM analysis
             print("  ├─ Generating scaling recommendations with LLM...")
             
+            # Human-readable form of the actual duration for the prompt
+            _dur_m = int(current_duration) // 60
+            _dur_s = int(current_duration) % 60
+            actual_duration_display = f"{_dur_m}m {_dur_s}s" if _dur_m > 0 else f"{_dur_s}s"
+            
             prompt = SCALING_ANALYSIS_PROMPT.format(
                 application_id=application_id,
                 existing_recommendations=existing_recs_text,
                 predictions_data=predictions_text,
                 current_duration_sec=current_duration,
+                actual_duration_display=actual_duration_display,
+                executor_wall_clock_sec=round(executor_wall_clock_sec, 1),
+                driver_wall_clock_sec=round(driver_wall_clock_sec, 1),
                 current_executor_count=current_executors,
                 driver_time_pct=driver_time_pct,
                 executor_efficiency=executor_efficiency
@@ -706,6 +777,8 @@ class SparkAdvisorOrchestrator:
                 "llm_analysis": analysis_text,
                 "current_metrics": {
                     "duration_sec": current_duration,
+                    "executor_wall_clock_sec": executor_wall_clock_sec,
+                    "driver_wall_clock_sec": driver_wall_clock_sec,
                     "executor_count": current_executors,
                     "driver_time_pct": driver_time_pct,
                     "executor_efficiency": executor_efficiency
@@ -751,180 +824,6 @@ class SparkAdvisorOrchestrator:
             print(f"  ⚠️ Schema fetch failed: {e}")
             return {}
     
-    async def generate_dynamic_kql_query(self, user_question: str) -> Optional[str]:
-        """
-        Use LLM to generate a KQL query based on user question and database schema.
-        Uses few-shot learning with curated examples for better accuracy.
-        
-        Args:
-            user_question: The user's natural language question
-            
-        Returns:
-            Generated KQL query string or None if generation fails
-        """
-        # Simplified, focused prompt with key tables only
-        prompt = f"""You are a KQL expert. Generate a valid Kusto query for Microsoft Fabric Spark telemetry.
-
-**KEY TABLES (use these only):**
-
-1. **sparklens_metrics** - Performance metrics (columns: app_id, metric, value)
-   Key metrics: 'Application Duration (sec)', 'Total Executor Time (sec)', 'Executor Efficiency', 'GC Overhead', 'Task Skew Ratio', 'Parallelism Score', 'Driver Time %', 'Job Type'
-
-2. **sparklens_recommedations** - SparkLens recommendations (columns: app_id, recommendation, severity, category)
-
-3. **fabric_recommedations** - Fabric-specific recommendations (columns: app_id, recommendation, severity, category)
-
-4. **sparklens_metadata** - Spark config properties (columns: app_id, property_name, property_value)
-
-5. **SparkEventLogs** - Spark configurations (columns: AppId, PropertiesJson [JSON blob])
-   ⚠️ PropertiesJson field is LARGE (>1000 tokens) - Use parse_json(PropertiesJson) to extract specific properties only
-   Common properties: spark.executor.cores, spark.executor.memory, spark.driver.cores, spark.sql.shuffle.partitions
-
-**User Question:** {user_question}
-
-**EXAMPLES (learn from these):**
-
-Q: "show 5 apps"
-A: sparklens_metrics | where metric == "Total Executor Time (sec)" | top 5 by value desc | project app_id, executor_time_sec = value
-
-Q: "list all apps"
-A: sparklens_metrics | where metric == "Total Executor Time (sec)" | project app_id, executor_time_sec = value | take 100
-
-Q: "show recent apps"
-A: sparklens_metrics | where metric == "Total Executor Time (sec)" | top 20 by value desc | project app_id, executor_time_sec = value
-
-Q: "show top 5 slowest apps"
-A: sparklens_metrics | where metric == "Application Duration (sec)" | top 5 by value desc | project app_id, duration_sec = value
-
-Q: "share 5 applications that take most amount of time"
-A: sparklens_metrics | where metric == "Total Executor Time (sec)" | top 5 by value desc | project app_id, executor_time_sec = value
-
-Q: "which apps took the longest time?"
-A: sparklens_metrics | where metric == "Total Executor Time (sec)" | top 10 by value desc | project app_id, executor_time_sec = value
-
-Q: "find streaming jobs"
-A: sparklens_metrics | where metric == "Job Type" and value == 1.0 | join kind=inner (sparklens_metrics | where metric == "Total Executor Time (sec)" | project app_id, executor_time_sec = value) on app_id | project app_id, executor_time_sec
-
-Q: "which apps have high GC overhead?"
-A: sparklens_metrics | where metric == "GC Overhead" and value > 0.25 | project app_id, gc_overhead = value | order by gc_overhead desc | take 100
-
-Q: "show apps with low executor efficiency"
-A: sparklens_metrics | where metric == "Executor Efficiency" and value < 0.4 | project app_id, efficiency = value | order by efficiency asc | take 100
-
-Q: "count how many apps exist"
-A: sparklens_metrics | where metric == "Total Executor Time (sec)" | distinct app_id | count
-
-Q: "group apps by severity"
-A: sparklens_recommedations | summarize count() by severity
-
-Q: "find apps with critical issues"
-A: sparklens_recommedations | where severity == "CRITICAL" | distinct app_id | take 100
-
-Q: "show apps using more than 10GB memory"
-A: sparklens_metadata | where property_name == "spark.executor.memory" and property_value contains "g" | project app_id, memory = property_value | take 100
-
-Q: "which apps have driver bottleneck?"
-A: sparklens_metrics | where metric == "Driver Time %" and value > 80.0 | project app_id, driver_pct = value | order by driver_pct desc | take 100
-
-Q: "show top 3 apps by executor time"
-A: sparklens_metrics | where metric == "Total Executor Time (sec)" | top 3 by value desc | project app_id, executor_time_sec = value
-
-Q: "how many cores per executor for application_XXX?"
-A: SparkEventLogs | where ApplicationId == "application_XXX" | extend properties = parse_json(jsn) | extend executor_cores = tostring(properties["spark.executor.cores"]) | where isnotempty(executor_cores) | summarize executor_cores = max(executor_cores) by ApplicationId | project app_id = ApplicationId, executor_cores
-
-Q: "what are the spark configurations for application_XXX?"
-A: SparkEventLogs | where ApplicationId == "application_XXX" | extend properties = parse_json(jsn) | extend driver_cores = tostring(properties["spark.driver.cores"]), executor_cores = tostring(properties["spark.executor.cores"]), executor_memory = tostring(properties["spark.executor.memory"]), shuffle_partitions = tostring(properties["spark.sql.shuffle.partitions"]) | where isnotempty(executor_cores) | summarize driver_cores = max(driver_cores), executor_cores = max(executor_cores), executor_memory = max(executor_memory), shuffle_partitions = max(shuffle_partitions) by ApplicationId | project ApplicationId, driver_cores, executor_cores, executor_memory, shuffle_partitions
-
-**RULES:**
-1. For "most time" / "took time" / "consumed time" queries: Use `metric == "Total Executor Time (sec)"` (total compute time consumed)
-2. For "slowest" / "longest duration" / "wall clock" queries: Use `metric == "Application Duration (sec)"` (end-to-end runtime)
-3. For Spark configuration properties: Use `SparkEventLogs` table with `parse_json(jsn)` to extract specific fields (e.g., spark.executor.cores, spark.executor.memory)
-4. **IMPORTANT for SparkEventLogs**: Each application has MULTIPLE rows - use `summarize` with `max()` or `any()` to get configuration values after filtering with `where isnotempty()`
-5. ALWAYS use `| take 100` at the end to limit results (or use `top N` for rankings)
-6. Use descriptive column names in project: `executor_time_sec` for total executor time, `duration_sec` for application duration
-7. For metrics queries: filter on EXACT metric name (case-sensitive): "Total Executor Time (sec)", "Application Duration (sec)", "Executor Efficiency", etc.
-8. Add ordering for better UX: `| order by value desc` for rankings or `| top N by value desc` for top-N queries
-9. For recommendations: severity values are CRITICAL, HIGH, MEDIUM, LOW (all caps)
-10. When extracting JSON properties from SparkEventLogs: Use `parse_json(PropertiesJson)` and `tostring(properties["property.name"])` to avoid retrieving large blobs
-11. Return ONLY the KQL query, no explanation, no markdown code blocks
-
-Generate query:"""
-        
-        try:
-            chat_history = ChatHistory()
-            chat_history.add_system_message("You are a KQL query generation expert. Return only valid KQL queries without markdown, explanations, or code blocks.")
-            chat_history.add_user_message(prompt)
-            
-            settings = PromptExecutionSettings(
-                max_tokens=800,  # Reduced - queries should be concise
-                temperature=0.2  # Slightly higher for better generalization
-            )
-            
-            response = await self.chat_service.get_chat_message_content(
-                chat_history=chat_history,
-                settings=settings
-            )
-            
-            query = str(response).strip()
-            
-            # Clean up query
-            # Remove markdown code blocks
-            if query.startswith("```"):
-                lines = query.split("\n")
-                # Find first and last code fence
-                start = 1 if lines[0].startswith("```") else 0
-                end = -1 if len(lines) > 1 and lines[-1].startswith("```") else len(lines)
-                query = "\n".join(lines[start:end])
-            
-            # Remove "A:" prefix if present
-            query = query.removeprefix("A:").strip()
-            
-            # Validate basic query structure
-            query_lower = query.lower()
-            if not any(table in query_lower for table in ["sparklens_metrics", "sparklens_recommedations", "fabric_recommedations", "sparklens_metadata"]):
-                print(f"  ⚠️ Query validation failed: No valid table name found")
-                return None
-            
-            # Check for dangerous operations
-            dangerous_ops = [".drop", ".create", ".alter", ".delete", ".set", "database", "cluster"]
-            if any(op in query_lower for op in dangerous_ops):
-                print(f"  ⚠️ Query validation failed: Contains dangerous operation")
-                return None
-            
-            print(f"  ✓ Generated query:\n{query[:200]}...")
-            return query
-            
-        except Exception as e:
-            print(f"  ⚠️ Query generation failed: {e}")
-            return None
-    
-    async def execute_dynamic_query(self, user_question: str) -> tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
-        """
-        Generate and execute a dynamic KQL query based on user question.
-        
-        Args:
-            user_question: The user's natural language question
-            
-        Returns:
-            Tuple of (results, generated_query) or (None, None) if failed
-        """
-        print(f"\n🤖 Generating dynamic query for: {user_question}")
-        
-        # Generate query
-        query = await self.generate_dynamic_kql_query(user_question)
-        
-        if not query:
-            return None, None
-        
-        # Execute with safety checks
-        try:
-            results = self.mcp_client.execute_dynamic_query(query, max_results=100)
-            print(f"  ✓ Query executed successfully ({len(results)} results)")
-            return results, query
-        except Exception as e:
-            print(f"  ❌ Query execution failed: {e}")
-            return None, query
-    
     async def chat(self, user_message: str, session_id: str = "default", context: Optional[Dict[str, Any]] = None) -> str:
         """
         Free-form conversational interface with full pipeline access and session context.
@@ -946,6 +845,9 @@ Generate query:"""
             "timestamp": datetime.utcnow().isoformat()
         })
         
+        # Normalize typos/spelling before routing so skill descriptions match cleanly
+        user_message = await self._normalize_input(user_message)
+
         # Resolve ambiguous references if needed
         resolved = await self._resolve_references(user_message, session)
         resolved_message = resolved.get("resolved_message", user_message)
@@ -970,511 +872,250 @@ Generate query:"""
         
         # Add to chat history
         self.chat_history.add_user_message(enhanced_message)
-        
-        # Check if user is asking to analyze an application (fuzzy match for typos)
-        if ("analyz" in user_message.lower() or "check" in user_message.lower() or "review" in user_message.lower()) and ("application" in user_message.lower() or "app" in user_message.lower()):
-            # Try to extract application ID
-            import re
-            match = re.search(r'application[_\s]+([a-zA-Z0-9_]+)', user_message)
-            if match:
-                app_id = match.group(1)
-                # Run analysis
-                result = await self.analyze_application(app_id)
-                
-                # Format response
-                response_text = self._format_analysis_for_chat(result)
-                self.chat_history.add_assistant_message(response_text)
-                return response_text
-        
-        # Check if user wants bad applications
-        if "bad" in user_message.lower() and ("application" in user_message.lower() or "practice" in user_message.lower()):
-            bad_apps = self.find_bad_applications()
-            response_text = self._format_bad_apps_for_chat(bad_apps)
-            self.chat_history.add_assistant_message(response_text)
-            return response_text
-        
-        # Check if user wants top applications by time/duration (slowest/fastest)
-        is_top_apps_query = any([
-            ("top" in user_message.lower() or "slowest" in user_message.lower() or "fastest" in user_message.lower()) and ("app" in user_message.lower() or "application" in user_message.lower()),
-            ("longest" in user_message.lower() or "shortest" in user_message.lower()) and ("app" in user_message.lower() or "application" in user_message.lower()),
-            ("took" in user_message.lower() or "take" in user_message.lower() or "takes" in user_message.lower()) and ("most" in user_message.lower() or "time" in user_message.lower()) and ("app" in user_message.lower() or "application" in user_message.lower()),
-        ])
-        if is_top_apps_query:
-            print(f"  📊 Detected top applications query - querying Kusto predictions...")
-            
-            # Extract limit (default to 5)
-            import re
-            limit_match = re.search(r'\b(\d+)\b', user_message)
-            limit = int(limit_match.group(1)) if limit_match else 5
-            
-            # Determine if slowest (desc) or fastest (asc)
-            is_fastest = "fastest" in user_message.lower() or "shortest" in user_message.lower()
-            order = "asc" if is_fastest else "desc"
-            
-            # Query predictions table for current state (contains "Current")
-            # Convert duration from "Xm Ys" format to seconds for proper numeric sorting
-            query = f'''
-                sparklens_predictions
-                | where ["Executor Multiplier"] contains "Current"
-                | project 
-                    app_id,
-                    executor_count = tolong(["Executor Count"]),
-                    duration = ["Estimated Total Duration"]
-                | extend duration_seconds = 
-                    tolong(extract(@"(\\d+)m", 1, duration)) * 60 + 
-                    tolong(extract(@"(\\d+)s", 1, duration))
-                | top {limit} by duration_seconds {order}
-                | project app_id, executor_count, duration
-            '''
-            
-            try:
-                results = self.mcp_client.query_to_dict_list(query)
-                
-                if results and len(results) > 0:
-                    direction = "fastest" if is_fastest else "slowest"
-                    response_text = f"📊 **Top {limit} {direction} applications:**\n\n"
-                    
-                    # Table header
-                    response_text += "| # | Application ID | Executors | Duration |\n"
-                    response_text += "|---|---|---|---|\n"
-                    
-                    for i, row in enumerate(results, 1):
-                        app_id = row.get('app_id', 'N/A')
-                        executor_count = row.get('executor_count', 'N/A')
-                        duration = row.get('duration', 'N/A')
-                        response_text += f"| {i} | `{app_id}` | {executor_count} | {duration} |\n"
-                    
-                    response_text += f"\n💡 Reply with `analyze {results[0].get('app_id')}` to get detailed recommendations."
-                    
-                    self.chat_history.add_assistant_message(response_text)
-                    
-                    # Store in session
-                    session["messages"].append({
-                        "role": "assistant",
-                        "content": response_text,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                    session["last_updated"] = datetime.utcnow().isoformat()
-                    
-                    print(f"  ✅ Returned {len(results)} applications from Kusto")
-                    return response_text
-                else:
-                    response_text = "❌ No application predictions found in Kusto. The `sparklens_predictions` table may be empty."
-                    self.chat_history.add_assistant_message(response_text)
-                    return response_text
-            except Exception as e:
-                print(f"  ❌ Error querying Kusto: {e}")
-                response_text = f"❌ Error querying Kusto: {str(e)}\n\nPlease verify the table `sparklens_predictions` exists and contains data."
-                self.chat_history.add_assistant_message(response_text)
-                return response_text
-        
-        # Check if user wants executor count for an application
-        is_executor_count_query = any([
-            ("how many executor" in user_message.lower() or "number of executor" in user_message.lower()) and ("application" in user_message.lower() or "app" in user_message.lower()),
-            ("executor count" in user_message.lower() or "executors did" in user_message.lower()) and ("application" in user_message.lower() or "app" in user_message.lower()),
-            "ran with" in user_message.lower() and "executor" in user_message.lower(),
-            ("how many cores" in user_message.lower() or "cores per executor" in user_message.lower() or "executor cores" in user_message.lower()),
-        ])
-        if is_executor_count_query:
-            print(f"  🔢 Detected executor configuration query...")
-            
-            # Try to extract application ID from query
-            import re
-            app_id_match = re.search(r'application_\d+_\d+', user_message, re.IGNORECASE)
-            
-            if app_id_match:
-                app_id = app_id_match.group(0)
-                print(f"  📊 Found app ID in query: {app_id}")
-            else:
-                # Check if there's a current app in session
-                app_id = session.get("current_app_id")
-                if not app_id:
-                    response_text = "❌ Please specify an application ID in your query, or analyze an application first.\n\n**Example:** `how many executors did application_1771441543262_0001 run with?`"
-                    self.chat_history.add_assistant_message(response_text)
-                    return response_text
-                print(f"  📊 Using current app from session: {app_id}")
-            
-            # Query for executor count AND configuration from both tables
-            # First get executor count from metrics
-            metrics_query = f'''
-                sparklens_metrics
-                | where app_id == '{app_id}' and metric == "Executor Count"
-                | project app_id, executor_count = tolong(value)
-            '''
-            
-            # Then get executor cores/memory from SparkEventLogs (parse JSON efficiently)
-            # Note: Each app may have multiple rows, so we search for rows with config properties
-            config_query = f'''
-                SparkEventLogs
-                | where AppId == '{app_id}'
-                | extend properties = parse_json(PropertiesJson)
-                | extend 
-                    executor_cores = tostring(properties["spark.executor.cores"]),
-                    executor_memory = tostring(properties["spark.executor.memory"]),
-                    driver_cores = tostring(properties["spark.driver.cores"]),
-                    driver_memory = tostring(properties["spark.driver.memory"])
-                | where isnotempty(executor_cores) or isnotempty(executor_memory)
-                | summarize 
-                    executor_cores = max(executor_cores),
-                    executor_memory = max(executor_memory),
-                    driver_cores = max(driver_cores),
-                    driver_memory = max(driver_memory)
-                    by AppId
-                | project 
-                    app_id = AppId,
-                    executor_cores,
-                    executor_memory,
-                    driver_cores,
-                    driver_memory
-            '''
-            
-            try:
-                # Get executor count
-                metrics_result = self.mcp_client.query_to_dict_list(metrics_query)
-                executor_count = metrics_result[0].get('executor_count', 'N/A') if metrics_result else 'N/A'
-                
-                # Get configuration (cores/memory) - this might fail if SparkEventLogs doesn't exist
-                config_result = []
-                executor_cores = 'N/A'
-                executor_memory = 'N/A'
-                driver_cores = 'N/A'
-                driver_memory = 'N/A'
-                
-                try:
-                    config_result = self.mcp_client.query_to_dict_list(config_query)
-                    if config_result:
-                        executor_cores = config_result[0].get('executor_cores', 'N/A')
-                        executor_memory = config_result[0].get('executor_memory', 'N/A')
-                        driver_cores = config_result[0].get('driver_cores', 'N/A')
-                        driver_memory = config_result[0].get('driver_memory', 'N/A')
-                except Exception as e:
-                    print(f"  ⚠️ Could not fetch config from SparkEventLogs: {e}")
-                
-                if executor_count == 'N/A' and not config_result:
-                    response_text = f"❌ No executor information found for `{app_id}`.\n\nPlease verify the application ID is correct."
-                    self.chat_history.add_assistant_message(response_text)
-                    return response_text
-                
-                # Calculate total cores (executor_count × executor_cores)
-                total_cores = 'N/A'
-                if executor_count != 'N/A' and executor_cores != 'N/A':
-                    try:
-                        total_cores = int(executor_count) * int(executor_cores)
-                    except (ValueError, TypeError):
-                        total_cores = 'N/A (calculation failed)'
-                
-                # Format response with available data
-                response_text = f"🔢 **Executor Configuration for `{app_id}`:**\n\n"
-                response_text += "| Property | Value |\n"
-                response_text += "|---|---|\n"
-                response_text += f"| Executor Count | **{executor_count}** |\n"
-                response_text += f"| Executor Cores (per executor) | {executor_cores} |\n"
-                response_text += f"| **Total Cores** | **{total_cores}** |\n"
-                response_text += f"| Executor Memory (per executor) | {executor_memory} |\n"
-                response_text += f"| Driver Cores | {driver_cores} |\n"
-                response_text += f"| Driver Memory | {driver_memory} |\n"
-                
-                # Add source information
-                response_text += "\n📊 **Data Sources:**\n"
-                response_text += f"- Executor Count: `sparklens_metrics` table ✅\n"
-                
-                if config_result and executor_cores != 'N/A':
-                    response_text += f"- Configuration: `SparkEventLogs` table ✅\n"
-                    if total_cores != 'N/A':
-                        response_text += f"\n🧮 **Calculation:** Total Cores = {executor_count} executors × {executor_cores} cores = **{total_cores} cores**\n"
-                else:
-                    response_text += f"- Configuration: `SparkEventLogs` table ❌ (not available)\n"
-                    response_text += f"\n💡 **Note:** Executor cores/memory data requires the `SparkEventLogs` table with Spark configuration properties.\n"
-                
-                response_text += "\n💡 **Want to see scaling impact?**\n"
-                response_text += f"Ask: `will increasing executors improve performance for {app_id}?`"
-                
-                self.chat_history.add_assistant_message(response_text)
-                
-                # Store in session
-                session["messages"].append({
-                    "role": "assistant",
-                    "content": response_text,
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-                session["last_updated"] = datetime.utcnow().isoformat()
-                
-                print(f"  ✅ Returned executor config: count={executor_count}, cores={executor_cores}")
-                return response_text
-                
-            except Exception as e:
-                print(f"  ❌ Error querying Kusto: {e}")
-                response_text = f"❌ Error querying Kusto: {str(e)}"
-                self.chat_history.add_assistant_message(response_text)
-                return response_text
-        
-        # Check if user wants to list/show available applications
-        is_list_apps_query = any([
-            ("list" in user_message.lower() or "show" in user_message.lower()) and ("available" in user_message.lower() or "all" in user_message.lower()) and ("app" in user_message.lower() or "application" in user_message.lower()),
-            "what apps" in user_message.lower() and ("available" in user_message.lower() or "exist" in user_message.lower() or "have" in user_message.lower()),
-        ])
-        if is_list_apps_query:
-            print(f"  📋 Detected list apps query - querying Kusto...")
-            
-            # Extract limit (default to 20)
-            import re
-            limit_match = re.search(r'\b(\d+)\b', user_message)
-            limit = int(limit_match.group(1)) if limit_match else 20
-            
-            # Query for distinct app IDs
-            query = f'sparklens_recommedations | distinct app_id | take {limit}'
-            
-            try:
-                results = self.mcp_client.query_to_dict_list(query)
-                
-                if results and len(results) > 0:
-                    response_text = f"📋 **Available applications in Kusto (showing first {len(results)}):**\n\n"
-                    
-                    for i, row in enumerate(results, 1):
-                        app_id = row.get('app_id', 'N/A')
-                        response_text += f"{i}. `{app_id}`\n"
-                    
-                    response_text += f"\n💡 Reply with `analyze application_XXX` to get recommendations for any app."
-                    
-                    self.chat_history.add_assistant_message(response_text)
-                    
-                    # Store in session
-                    session["messages"].append({
-                        "role": "assistant",
-                        "content": response_text,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                    session["last_updated"] = datetime.utcnow().isoformat()
-                    
-                    print(f"  ✅ Returned {len(results)} applications from Kusto")
-                    return response_text
-                else:
-                    response_text = "❌ No applications found in Kusto. The `sparklens_recommedations` table may be empty."
-                    self.chat_history.add_assistant_message(response_text)
-                    return response_text
-            except Exception as e:
-                print(f"  ❌ Error querying Kusto: {e}")
-                response_text = f"❌ Error querying Kusto: {str(e)}\n\nPlease verify the table `sparklens_recommedations` exists and contains data."
-                self.chat_history.add_assistant_message(response_text)
-                return response_text
-        
-        # Check if user wants recent applications
-        is_recent_query = any([
-            "today" in user_message.lower(),
-            "recent" in user_message.lower() and "application" in user_message.lower(),
-            "ran today" in user_message.lower(),
-            "executed today" in user_message.lower(),
-            "last " in user_message.lower() and ("hour" in user_message.lower() or "day" in user_message.lower()),
-        ])
-        if is_recent_query:
-            # Parse hours if specified
-            import re
-            hours = 24  # default to today
-            hour_match = re.search(r'last\s+(\d+)\s+hour', user_message.lower())
-            day_match = re.search(r'last\s+(\d+)\s+day', user_message.lower())
-            if hour_match:
-                hours = int(hour_match.group(1))
-            elif day_match:
-                hours = int(day_match.group(1)) * 24
-            
-            recent_apps = self.find_recent_applications(hours)
-            response_text = self._format_recent_apps_for_chat(recent_apps, hours)
-            self.chat_history.add_assistant_message(response_text)
-            
-            # Store in session
-            session["messages"].append({
-                "role": "assistant",
-                "content": response_text,
-                "timestamp": datetime.utcnow().isoformat()
-            })
-            session["last_updated"] = datetime.utcnow().isoformat()
-            
-            return response_text
-        
-        # Check if this is a broad best practices / how-to question
-        is_broad_question = any([
-            "best practice" in user_message.lower(),
-            "how to" in user_message.lower(),
-            "how do i" in user_message.lower(),
-            "how should i" in user_message.lower(),
-            "what is" in user_message.lower(),
-            "configure" in user_message.lower() and "fabric" in user_message.lower(),
-            "tune" in user_message.lower() or "tuning" in user_message.lower(),
-            "optimize" in user_message.lower() and "fabric" in user_message.lower(),
-            "aqe" in user_message.lower(),
-            "native execution" in user_message.lower(),
-            "vorder" in user_message.lower() or "v-order" in user_message.lower(),
-        ])
-        
-        if is_broad_question:
-            print(f"  🔍 Detected broad question - querying RAG documentation...")
-            
-            # Query RAG for relevant documentation
-            try:
-                rag_results = self.mcp_client.search(user_message, top_k=5)
-                
-                if rag_results and len(rag_results) > 0:
-                    # Format RAG chunks
-                    rag_chunks = "\n\n---\n\n".join([
-                        f"**Source:** {r.get('filename', 'Unknown')}\n**Content:**\n{r.get('content', '')[:1000]}"
-                        for r in rag_results[:5]
-                    ])
-                    
-                    # Build prompt
-                    prompt = BROAD_QUESTION_PROMPT.format(
-                        rag_chunks=rag_chunks,
-                        question=user_message
-                    )
-                    
-                    # Get LLM response
-                    chat_history = ChatHistory()
-                    chat_history.add_system_message("You are a Microsoft Fabric Spark expert.")
-                    chat_history.add_user_message(prompt)
-                    
-                    settings = PromptExecutionSettings(
-                        max_tokens=2000,
-                        temperature=0.3  # Lower temp for factual answers
-                    )
-                    
-                    response = await self.chat_service.get_chat_message_content(
-                        chat_history=chat_history,
-                        settings=settings
-                    )
-                    
-                    response_text = str(response)
-                    self.chat_history.add_assistant_message(response_text)
-                    
-                    # Store response in session
-                    session["messages"].append({
-                        "role": "assistant",
-                        "content": response_text,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                    session["last_updated"] = datetime.utcnow().isoformat()
-                    
-                    # Cleanup old sessions
-                    await self._cleanup_old_sessions()
-                    
-                    print(f"  ✅ Answered using {len(rag_results)} RAG documentation chunks")
-                    return response_text
-                else:
-                    print(f"  ⚠️ No RAG results found, falling back to LLM knowledge")
-            except Exception as e:
-                print(f"  ⚠️ RAG query failed: {e}, falling back to LLM")
-        
-        # Try dynamic query generation for data-related questions
-        # This catches queries like "show me streaming jobs", "group by capacity", etc.
-        is_data_query = any([
-            "show" in user_message.lower(),
-            "list" in user_message.lower(),
-            "find" in user_message.lower(),
-            "get" in user_message.lower(),
-            "share" in user_message.lower(),  # Added: share 5 apps, share top apps, etc.
-            "give me" in user_message.lower(),  # Added: give me 5 apps, etc.
-            "which" in user_message.lower(),
-            "what" in user_message.lower() and any(x in user_message.lower() for x in ["applications", "apps", "jobs"]),
-            "how many" in user_message.lower(),
-            "count" in user_message.lower(),
-            "group" in user_message.lower(),
-            "average" in user_message.lower(),
-            "sum" in user_message.lower() or "total" in user_message.lower(),
-            "top" in user_message.lower() and any(x in user_message.lower() for x in ["applications", "apps", "jobs"]),
-        ])
-        
-        # Exclude if already handled by specific intents
-        is_already_handled = any([
-            "analyze" in user_message.lower() and "application" in user_message.lower(),
-            "bad" in user_message.lower() and ("apps" in user_message.lower() or "practices" in user_message.lower()),
-            is_recent_query,
-            is_broad_question
-        ])
-        
-        if is_data_query and not is_already_handled:
-            print(f"  🤖 Attempting dynamic query generation...")
-            
-            try:
-                results, query = await self.execute_dynamic_query(user_message)
-                
-                if results is not None and len(results) > 0:
-                    # Format results
-                    response_text = self._format_dynamic_query_results(results, query, user_message)
-                    self.chat_history.add_assistant_message(response_text)
-                    
-                    # Store in session
-                    session["messages"].append({
-                        "role": "assistant",
-                        "content": response_text,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                    session["last_updated"] = datetime.utcnow().isoformat()
-                    
-                    await self._cleanup_old_sessions()
-                    
-                    print(f"  ✅ Answered using dynamic KQL query")
-                    return response_text
-                elif query:
-                    # Query was generated but failed - show error with helpful hints
-                    hints = []
-                    if "SparkSQLExecutionEvents" in query and any(x in user_message.lower() for x in ["time", "duration", "longest", "slowest"]):
-                        hints.append("💡 **Hint:** For queries about total compute time consumed, use `sparklens_metrics` table with `metric == 'Total Executor Time (sec)'`. For application wall-clock duration, use `metric == 'Application Duration (sec)'`.")
-                    if "datetime_diff" in query or "EndTime" in query or "StartTime" in query:
-                        hints.append("💡 **Hint:** Duration is pre-calculated in the `sparklens_metrics` table - no need to calculate from StartTime/EndTime.")
-                    
-                    hints_text = "\n\n" + "\n".join(hints) if hints else ""
-                    
-                    response_text = f"""I generated this query to answer your question:
 
-```kql
-{query}
-```
+        # ── Auto-invoke the correct plugin skill via FunctionChoiceBehavior.Auto() ──
+        # The LLM reads @kernel_function descriptions to decide which skill(s) to call.
+        # No if/elif routing needed — the model handles intent detection.
+        try:
+            settings = AzureChatPromptExecutionSettings(
+                max_tokens=4000,
+                temperature=0.3,
+                function_choice_behavior=FunctionChoiceBehavior.Auto()
+            )
+            response = await self.chat_service.get_chat_message_content(
+                chat_history=self.chat_history,
+                settings=settings,
+                kernel=self.kernel
+            )
+            response_text = str(response)
+        except Exception as e:
+            print(f"  ⚠️ Plugin auto-invoke failed ({e}), falling back to plain LLM")
+            fallback_settings = PromptExecutionSettings(max_tokens=2000, temperature=0.7)
+            response = await self.chat_service.get_chat_message_content(
+                chat_history=self.chat_history,
+                settings=fallback_settings
+            )
+            response_text = str(response)
 
-However, the query failed to execute. This might be due to:
-- Missing data in the table
-- Incorrect column names or data types
-- Empty result set{hints_text}
+        # ── Fallback chain: RAG → LLM → Judge ───────────────────────────────────────
+        # ONLY triggers when:
+        #   - Plugin returned DATA_NOT_FOUND (explicit sentinel from analyze_app), AND
+        #   - The user message references a specific application ID.
+        # Fleet / listing queries ("show top 5 slowest apps", "show bad apps") that
+        # return zero rows should surface as "no apps found" — never escalate to RAG.
+        if self._is_app_not_found(response_text, user_message):
+            print("  ℹ️ App-specific Kusto lookup returned no data — triggering RAG/LLM/Judge fallback")
+            response_text = await self._rag_llm_fallback(user_message, session)
+        elif self._is_knowledge_question(user_message):
+            print("  ℹ️ Knowledge/documentation question detected — searching RAG docs...")
+            response_text = await self._rag_llm_fallback(user_message, session)
 
-Try asking: "Show me the top 5 applications by duration" or "Which apps took the most time?"
-"""
-                    self.chat_history.add_assistant_message(response_text)
-                    
-                    session["messages"].append({
-                        "role": "assistant",
-                        "content": response_text,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                    session["last_updated"] = datetime.utcnow().isoformat()
-                    
-                    return response_text
-            except Exception as e:
-                print(f"  ⚠️ Dynamic query failed: {e}, falling back to LLM")
-        
-        # Otherwise, regular chat with LLM
-        settings = PromptExecutionSettings(
-            max_tokens=2000,
-            temperature=0.7
-        )
-        
-        response = await self.chat_service.get_chat_message_content(
-            chat_history=self.chat_history,
-            settings=settings
-        )
-        
-        response_text = str(response)
+        # ── Update session app_id from any application ID mentioned in the response ──
+        import re as _re
+        _app_match = _re.search(r'application_\d+_\d+', response_text, _re.IGNORECASE)
+        if _app_match and _app_match.group(0) != session.get("current_app_id"):
+            session["current_app_id"] = _app_match.group(0)
+            print(f"  📱 Session app_id → {session['current_app_id']}")
+
         self.chat_history.add_assistant_message(response_text)
-        
-        # Store response in session
         session["messages"].append({
             "role": "assistant",
             "content": response_text,
             "timestamp": datetime.utcnow().isoformat()
         })
         session["last_updated"] = datetime.utcnow().isoformat()
-        
-        # Cleanup old sessions
         await self._cleanup_old_sessions()
-        
         return response_text
-    
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Fallback chain helpers
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _is_app_not_found(self, response_text: str, user_message: str) -> bool:
+        """
+        Return True ONLY when an app-specific lookup failed to find the requested
+        application ID in Kusto.
+
+        Rules:
+        - The user message must contain an application_XXXX_XXXX pattern, OR the
+          plugin must have set the DATA_NOT_FOUND sentinel explicitly.
+        - Fleet / listing queries ("show top 5 slowest apps", "show bad apps") always
+          return False, even if the result set is empty — they should display
+          "no apps found" rather than escalating to RAG.
+        """
+        import re as _re2
+
+        # The plugin's analyze_app skill sets this JSON key explicitly when all
+        # three primary Kusto tables return empty for a given app ID.
+        if "DATA_NOT_FOUND" in (response_text or ""):
+            return True
+
+        # Only consider other no-data phrases when the message itself asked about
+        # a specific application (prevents fleet-query false positives).
+        has_app_id = bool(_re2.search(r'application_\d+_\d+', user_message, _re2.IGNORECASE))
+        if not has_app_id:
+            return False
+
+        app_not_found_phrases = [
+            "no records found",
+            "no data found",
+            "not found in any kusto",
+            "no data in kusto",
+            "application id does not exist",
+            "verify the application id",
+        ]
+        low = (response_text or "").lower()
+        return any(p in low for p in app_not_found_phrases)
+
+    def _is_kusto_empty(self, response_text: str) -> bool:
+        """Deprecated — use _is_app_not_found. Kept for any external callers."""
+        return self._is_app_not_found(response_text, "")
+
+    def _is_knowledge_question(self, message: str) -> bool:
+        """
+        Returns True for conceptual/documentation questions that should be answered
+        from RAG docs rather than LLM training knowledge.
+        Matches: "what is X", "what are X", "how does X work", "explain X",
+                 "tell me about X", "describe X", "how to X", "why does X".
+        Excludes fleet/listing commands ("show", "list", "get", "analyze").
+        """
+        low = message.lower().strip()
+        # Exclude fleet queries and commands that should hit Kusto
+        command_prefixes = ("show ", "list ", "get ", "analyze ", "find ", "fetch ", "run ")
+        if any(low.startswith(p) for p in command_prefixes):
+            return False
+        knowledge_patterns = (
+            "what is ", "what are ", "what does ", "what's ",
+            "how does ", "how do ", "how to ", "how can ",
+            "explain ", "describe ", "tell me about ",
+            "why does ", "why is ", "when should ", "when to ",
+            "difference between", "compare ", "vs ", "versus ",
+        )
+        return any(p in low for p in knowledge_patterns)
+
+    async def _rag_llm_fallback(self, user_message: str, session: dict) -> str:
+        """
+        Tier-2/3/4 fallback: RAG → LLM (with context or pure) → Judge → formatted output.
+
+        Called when:
+          - A plugin skill detected no Kusto data (DATA_NOT_FOUND / no-data phrase)
+          - The user asked a knowledge question and RAG has relevant docs
+
+        Returns a formatted response wrapped in AI_WARNING_BLOCK with Judge validation.
+        """
+        print("  ├─ [Fallback] Searching RAG docs...")
+        rag_docs = self.mcp_client.search_spark_docs(user_message, top_k=3)
+
+        if rag_docs:
+            # ── TIER 2: RAG-grounded LLM response ──────────────────────────────
+            print(f"  ├─ [Fallback] RAG returned {len(rag_docs)} doc(s) — building grounded response")
+            context_parts = []
+            for doc in rag_docs:
+                title = doc.get("title", "Documentation")
+                url = doc.get("source_url", "")
+                content = doc.get("content", "")
+                src_line = f"Source: {url}" if url else ""
+                context_parts.append(f"**{title}**\n{src_line}\n{content}")
+            rag_context = "\n\n---\n\n".join(context_parts)
+
+            doc_titles = [doc.get("title", "doc") for doc in rag_docs]
+            source_note = f"> Source: RAG — {', '.join(doc_titles)} | OFFICIAL DOCS"
+            confidence = "HIGH"
+
+            fallback_history = ChatHistory()
+            fallback_history.add_system_message(
+                "You are an expert Apache Spark and Microsoft Fabric engineer. "
+                "Answer the user's question using ONLY the provided documentation context. "
+                "Be specific and actionable. Cite the source document title when referring to it."
+            )
+            fallback_history.add_user_message(
+                f"Documentation context:\n\n{rag_context}\n\n"
+                f"User question: {user_message}"
+            )
+        else:
+            # ── TIER 3: Pure LLM fallback ───────────────────────────────────────
+            print("  ├─ [Fallback] No RAG results — using pure LLM fallback")
+            source_note = "> Source: LLM training knowledge"
+            confidence = "MEDIUM"
+
+            fallback_history = ChatHistory()
+            fallback_history.add_system_message(
+                "You are an expert Apache Spark and Microsoft Fabric engineer. "
+                "Answer based on your training knowledge. Be specific and precise."
+            )
+            fallback_history.add_user_message(user_message)
+
+        fallback_settings = PromptExecutionSettings(max_tokens=2000, temperature=0.4)
+        fallback_response = await self.chat_service.get_chat_message_content(
+            chat_history=fallback_history,
+            settings=fallback_settings,
+        )
+        llm_answer = str(fallback_response)
+
+        # Build initial response wrapped in AI warning
+        warning_header = AI_WARNING_BLOCK.format(confidence=confidence)
+        full_response = f"{warning_header}\n{source_note}\n\n{llm_answer}\n{AI_WARNING_BLOCK_CLOSE}"
+
+        # ── TIER 4: Judge validation ─────────────────────────────────────────────
+        # Kusto session recs (if any) are passed as read-only reference — Judge
+        # contextualises against them but cannot modify or override Kusto output.
+        print("  ├─ [Fallback] Running Judge validation...")
+        try:
+            app_id = session.get("current_app_id") or "general_knowledge"
+            recs = [
+                {
+                    "text": llm_answer,
+                    "source": "rag" if rag_docs else "llm",
+                    "metadata": {"generated": True, "query": user_message},
+                }
+            ]
+            # Build read-only Kusto reference context from session (never sent as recs to Judge)
+            kusto_context = None
+            session_kusto_recs = session.get("last_recommendations", [])
+            if session_kusto_recs:
+                kusto_context = {
+                    "kusto_recommendations_reference": [
+                        r.get("text", r.get("recommendation", ""))
+                        for r in session_kusto_recs
+                        if r.get("source") == "kusto" or r.get("metadata", {}).get("from_kusto")
+                    ],
+                    "note": "Kusto recommendations are source-of-truth — do not modify or override them.",
+                }
+            judged = self.mcp_client.validate_recommendations(
+                application_id=app_id,
+                recommendations=recs,
+                application_context=kusto_context,
+            )
+            validated_recs = judged.get("validated_recommendations", [])
+            judge_summary = judged.get("summary", "")
+
+            if validated_recs:
+                top_rec = validated_recs[0]
+                rec_text = top_rec.get("recommendation", llm_answer)
+                action = top_rec.get("action", "")
+                reasoning = top_rec.get("reasoning", "")
+
+                judge_details = ""
+                if reasoning:
+                    judge_details += f"\n\n**Validation:** {reasoning}"
+                if action:
+                    judge_details += f"\n\n**Recommended Actions:** {action}"
+
+                full_response = (
+                    f"{warning_header}\n{source_note}\n\n"
+                    f"{rec_text}{judge_details}\n"
+                    f"{AI_WARNING_BLOCK_CLOSE}"
+                )
+                if judge_summary:
+                    full_response += f"\n\n**Summary:** {judge_summary}"
+
+            print("  └─ [Fallback] ✅ Judge validation complete")
+        except Exception as e:
+            print(f"  └─ [Fallback] ⚠️ Judge validation skipped: {e}")
+            # full_response already set before judge call — keep it as-is
+
+        return full_response
+
     def _format_analysis_for_chat(self, analysis: Dict[str, Any]) -> str:
         """Format analysis results for chat conversation."""
         app_id = analysis.get("application_id", "unknown")
@@ -1735,51 +1376,94 @@ Try asking: "Show me the top 5 applications by duration" or "Which apps took the
         print(f"\n🔍 Finding healthy applications (min score: {min_score})...")
         
         try:
-            # Query for healthy applications
+            # Query for healthy applications using the canonical performance score formula
+            # perf_score = (exec_eff*30) + (parallelism*30) + ((1-gc)*20) + ((1/skew)*20)
             query = f"""
-            SparkLogs
-            | join kind=leftouter (
-                SparkRecommendations
-                | summarize ViolationCount=count(), 
-                            CriticalCount=countif(Severity == "CRITICAL") by ApplicationId
-            ) on ApplicationId
-            | summarize 
-                ViolationCount=max(coalesce(ViolationCount, 0)),
-                TotalJobs=count(),
-                CriticalCount=max(coalesce(CriticalCount, 0)) by ApplicationId
-            | extend HealthScore = 100 
-                     - (ViolationCount * 5) 
-                     - (CriticalCount * 20)
-            | where HealthScore >= {min_score}
-            | order by HealthScore desc
-            """
-            
+sparklens_metrics
+| where metric in ("Executor Efficiency","Parallelism Score","GC Overhead","Task Skew Ratio")
+| summarize
+    exec_eff    = maxif(value, metric == "Executor Efficiency"),
+    parallelism = maxif(value, metric == "Parallelism Score"),
+    gc          = maxif(value, metric == "GC Overhead"),
+    skew        = maxif(value, metric == "Task Skew Ratio")
+  by app_id
+| extend perf_score = round(
+    (exec_eff * 30.0)
+    + (parallelism * 30.0)
+    + ((1.0 - min_of(gc, 1.0)) * 20.0)
+    + ((1.0 / max_of(skew, 1.0)) * 20.0), 1)
+| where perf_score >= {min_score}
+| order by perf_score desc
+| join kind=leftouter (
+    sparklens_metadata
+    | project applicationId, applicationName, artifactId
+  ) on $left.app_id == $right.applicationId
+| take 100
+"""
+
             # Execute query
             results = self.mcp_client.query_to_dict_list(query)
-            
+
             if not results or len(results) == 0:
                 print(f"  └─ No healthy applications found (min score: {min_score})")
                 return []
-            
-            # Add grade labels
+
+            # Add grade labels based on perf_score
             for app in results:
-                score = app.get("HealthScore", 0)
-                if score >= 90:
-                    app["Grade"] = "A"
-                elif score >= 80:
-                    app["Grade"] = "B"
+                score = app.get("perf_score", 0)
+                if score >= 80:
+                    app["Grade"] = "EXCELLENT"
+                elif score >= 65:
+                    app["Grade"] = "GOOD"
+                elif score >= 50:
+                    app["Grade"] = "FAIR"
                 else:
-                    app["Grade"] = "C"
-            
+                    app["Grade"] = "POOR"
+
             print(f"  ✓ Found {len(results)} healthy applications")
             print(f"  └─ ✅ Query complete!\n")
-            
+
             return results
-            
+
         except Exception as e:
             print(f"  └─ ❌ Error: {e}\n")
             return []
     
+    async def _normalize_input(self, message: str) -> str:
+        """
+        Fix typos and misspellings in user input before routing to plugin skills.
+        Uses a minimal LLM call (max_tokens=60, temperature=0) — no session context needed.
+        Preserves app IDs (application_XXXX_XXXX), metric names, and numbers exactly.
+        Returns the original message unchanged if the call fails.
+        """
+        # Skip normalization for very short messages or messages that are already clean
+        # (no non-ASCII, no obvious typo patterns) to save latency
+        if len(message.strip()) <= 3:
+            return message
+
+        try:
+            from semantic_kernel.contents import ChatHistory as _CH
+            _hist = _CH()
+            _hist.add_system_message(
+                "You are a spell-checker. Fix only typos and misspellings in the user's text. "
+                "Do NOT rephrase, reorder, or change meaning. "
+                "Preserve application IDs (e.g. application_1771441543262_0001), "
+                "metric names, numbers, and code snippets exactly as-is. "
+                "Reply with ONLY the corrected text — no explanation, no quotes."
+            )
+            _hist.add_user_message(message)
+            _settings = PromptExecutionSettings(max_tokens=150, temperature=0)
+            _resp = await self.chat_service.get_chat_message_content(
+                chat_history=_hist,
+                settings=_settings
+            )
+            normalized = str(_resp).strip()
+            if normalized and normalized != message:
+                print(f"  ✏️  Normalized: '{message}' → '{normalized}'")
+            return normalized if normalized else message
+        except Exception:
+            return message
+
     async def _resolve_references(self, message: str, session: dict) -> dict:
         """
         Resolve ambiguous references in user messages using session context.

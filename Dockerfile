@@ -45,7 +45,6 @@ COPY rag/ ./rag/
 COPY ui/ ./ui/
 COPY examples/ ./examples/
 COPY run.py .
-COPY .vscode/ ./.vscode/
 
 # Create non-root user for security
 RUN useradd -m -u 1000 sparkuser && \
@@ -55,17 +54,17 @@ USER sparkuser
 
 # Expose ports
 # 8000 - MCP Server (SSE)
-# 8501 - Chainlit UI
-EXPOSE 8000 8501
+# 7432 - Chat UI (Starlette + chat.html)
+EXPOSE 8000 7432
 
 # Environment variables with defaults
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8501
+    PORT=7432
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8501/ || exit 1
+    CMD curl -f http://localhost:7432/ || exit 1
 
 # Startup script
 CMD ["python", "run.py"]

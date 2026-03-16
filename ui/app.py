@@ -269,7 +269,45 @@ def detect_intent(message: str) -> Dict[str, Any]:
                 "params": {"application_id": app_id}
             }
     
-    # INTENT 10: general_chat (default)
+    # INTENT 10: analyze_trend (performance over time)
+    trend_patterns = [
+        r'\btrend\b',                             # trend
+        r'\bover\s+time\b',                       # over time
+        r'\bgetting\s+(?:worse|better|slower|faster)\b',  # getting worse/better
+        r'\bhistor(?:y|ical)\b',                  # history, historical
+        r'\blast\s+\d+\s+days?\b',               # last 7 days
+        r'\bperformance\s+(?:change|over|across)\b',  # performance change
+        r'\bweek[\s\-]?over[\s\-]?week\b',       # week over week
+        r'\bdegerad(?:ing|ed|e)\b',               # degrading/degraded
+        r'\bimproving?\b',                        # improving
+    ]
+
+    if any(re.search(pattern, message_lower) for pattern in trend_patterns):
+        # Try to extract an app name (anything quoted or common name patterns)
+        # First check for explicit "for <name>" pattern
+        name_match = re.search(
+            r'(?:for|of|on)\s+([a-zA-Z0-9_\-\.]+(?:\s+[a-zA-Z0-9_\-\.]+){0,3})',
+            message_lower
+        )
+        days_match = re.search(r'(\d+)\s+days?', message_lower)
+        app_name_raw = name_match.group(1).strip() if name_match else ""
+        days_val = int(days_match.group(1)) if days_match else 7
+
+        # If the name looks like an app_id, strip it and use as-is
+        if app_name_raw and app_name_raw not in (
+            "the", "this", "my", "application", "app", "time", "trend", "week"
+        ):
+            return {
+                "intent": "analyze_trend",
+                "params": {"application_name": app_name_raw, "days": days_val}
+            }
+        # Fallback: no name but clear trend intent — ask user
+        return {
+            "intent": "analyze_trend",
+            "params": {"application_name": "", "days": days_val}
+        }
+
+    # INTENT 11: general_chat (default)
     return {
         "intent": "general_chat",
         "params": {}
@@ -311,14 +349,14 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
     
     # Build output with styled header
     md = f"""
-<div style="background: #0D1318; border: 2px solid #00D4FF; border-radius: 4px; padding: 16px 20px; margin-bottom: 20px;">
-  <h1 style="margin: 0 0 8px 0; color: #E8F4F8; font-size: 20px;">
+<div style="background: #FFFFFF; border: 2px solid #00D4FF; border-radius: 4px; padding: 16px 20px; margin-bottom: 20px;">
+  <h1 style="margin: 0 0 8px 0; color: #0F172A; font-size: 20px;">
     {health_badge} Application Analysis: <code style="color: #00D4FF;">{app_id}</code>
   </h1>
-  <div style="color: #5A7A8A; font-size: 13px; line-height: 1.6;">
-    <strong style="color: #E8F4F8;">Overall Health:</strong> {health}<br>
-    <strong style="color: #E8F4F8;">Summary:</strong> {summary}<br>
-    <strong style="color: #E8F4F8;">Total Recommendations:</strong> {len(recs)} 
+  <div style="color: #64748B; font-size: 13px; line-height: 1.6;">
+    <strong style="color: #0F172A;">Overall Health:</strong> {health}<br>
+    <strong style="color: #0F172A;">Summary:</strong> {summary}<br>
+    <strong style="color: #0F172A;">Total Recommendations:</strong> {len(recs)} 
     (<span style="color: #FF5252;">🔴 {critical_count} Critical</span> | 
      <span style="color: #FFB300;">🟡 {warning_count} Warning</span> | 
      <span style="color: #3FB950;">🟢 {info_count} Info</span>)
@@ -334,7 +372,7 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
 <div style="margin-top: 24px;">
   <div style="background: linear-gradient(90deg, #0099CC, #00D4FF); height: 3px; margin-bottom: 12px;"></div>
   <h2 style="color: #00D4FF; margin: 0 0 8px 0; font-size: 18px;">📊 TIER 1 — Kusto Telemetry (Ground Truth)</h2>
-  <p style="color: #5A7A8A; font-size: 12px; margin: 0 0 16px 0;"><strong>Source:</strong> sparklens_recommedations + fabric_recommedations tables | <strong>Trust:</strong> ✅ VERIFIED</p>
+  <p style="color: #64748B; font-size: 12px; margin: 0 0 16px 0;"><strong>Source:</strong> sparklens_recommedations + fabric_recommedations tables | <strong>Trust:</strong> ✅ VERIFIED</p>
 </div>
 
 """
@@ -355,17 +393,17 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
             # Determine colors based on severity or priority
             if severity in ["CRITICAL", "HIGH"] or priority <= 9:
                 border_color = "#FF5252"
-                bg_color = "#1A0F0F"
+                bg_color = "#FFF8F8"
             elif severity in ["MEDIUM", "WARNING"] or priority <= 29:
                 border_color = "#FFB300"
-                bg_color = "#1A1610"
+                bg_color = "#FFFBF0"
             else:
                 border_color = "#3FB950"
-                bg_color = "#0F1A14"
+                bg_color = "#F0FFF4"
             
             md += f"""
 <div style="background: {bg_color}; border-left: 4px solid {border_color}; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px; font-family: 'Segoe UI', 'IBM Plex Mono', monospace;">
-  <div style="color: #E8F4F8; font-size: 13px; line-height: 1.7; white-space: pre-wrap;">
+  <div style="color: #0F172A; font-size: 13px; line-height: 1.7; white-space: pre-wrap;">
 {text_html}
   </div>
 </div>
@@ -378,10 +416,10 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
         
         if not has_kusto_data and len(recs) == 0:
             md += """
-<div style="background: #0D1318; border: 1px dashed #1C2A35; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
-  <p style="color: #5A7A8A; font-style: italic; margin: 0;">
+<div style="background: #FFFFFF; border: 1px dashed #CBD5E0; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
+  <p style="color: #64748B; font-style: italic; margin: 0;">
     No Spark Advisor or Fabric recommendations found in Kusto for this application.<br>
-    <span style="font-size: 11px; color: #3A5060;">
+    <span style="font-size: 11px; color: #94A3B8;">
       This could mean: (1) App hasn't been analyzed yet, 
       (2) App ID not found in recommendation tables, or 
       (3) No performance issues detected.
@@ -399,7 +437,9 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
 <div style="margin-top: 32px;">
   <div style="background: linear-gradient(90deg, #3FB950, #00E676); height: 3px; margin-bottom: 12px;"></div>
   <h2 style="color: #3FB950; margin: 0 0 8px 0; font-size: 18px;">📚 TIER 2 — Documentation & Best Practices</h2>
-  <p style="color: #5A7A8A; font-size: 12px; margin: 0 0 16px 0;"><strong>Source:</strong> Microsoft Fabric Spark docs via RAG | <strong>Trust:</strong> 📖 OFFICIAL</p>
+  <p style="color: #64748B; font-size: 12px; margin: 0 0 16px 0;">
+    <strong style="color: #3FB950;">Source: RAG — SparkDocumentation / BestPracticeDocs | OFFICIAL DOCS</strong>
+  </p>
 </div>
 
 """
@@ -413,7 +453,7 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
             
             # Handle empty content
             if not text or len(text.strip()) < 10:
-                text = "<em style='color: #5A7A8A;'>Content not available - see documentation link below</em>"
+                text = "<em style='color: #64748B;'>Content not available - see documentation link below</em>"
                 truncated = False
             else:
                 # Truncate long RAG responses
@@ -426,19 +466,22 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
             doc_link = ""
             if source_url:
                 link_text = "📄 Read full documentation →"
-                doc_link = f"""<div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #1C2A35;">
-    <a href="{source_url}" target="_blank" style="color: #00D4FF; text-decoration: none; font-size: 12px;">
+                doc_link = f"""<div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #E2E8F0;">
+    <a href="{source_url}" target="_blank" style="color: #0078D4; text-decoration: none; font-size: 12px;">
       {link_text}
     </a>
   </div>"""
             
             md += f"""
-<div style="background: #0D1318; border: 1px solid #3FB950; border-left: 3px solid #3FB950; border-radius: 4px; padding: 16px 18px; margin-bottom: 14px;">
-  <div style="color: #3FB950; font-weight: 600; font-size: 14px; margin-bottom: 10px;">
+<div style="background: #FFFFFF; border: 1px solid #D6EDDA; border-left: 3px solid #107C10; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 4px; padding: 16px 18px; margin-bottom: 14px;">
+  <div style="color: #3FB950; font-weight: 600; font-size: 14px; margin-bottom: 4px;">
     📄 {doc_title}
   </div>
-  <div style="color: #C9D1D9; font-size: 13px; line-height: 1.7;">
-    {text}{' <em style="color: #5A7A8A;">...</em>' if truncated else ''}
+  <div style="color: #64748B; font-size: 11px; letter-spacing: 0.02em; margin-bottom: 10px;">
+    Source: RAG — {doc_title} | OFFICIAL DOCS
+  </div>
+  <div style="color: #374151; font-size: 13px; line-height: 1.7;">
+    {text}{' <em style="color: #64748B;">...</em>' if truncated else ''}
   </div>
   {doc_link}
 </div>
@@ -446,8 +489,8 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
 """
     else:
         md += """
-<div style="background: #0D1318; border: 1px dashed #1C2A35; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
-  <p style="color: #5A7A8A; font-style: italic; margin: 0;">No relevant documentation found for this query.</p>
+<div style="background: #FFFFFF; border: 1px dashed #CBD5E0; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
+  <p style="color: #64748B; font-style: italic; margin: 0;">No relevant documentation found for this query.</p>
 </div>
 
 """
@@ -462,12 +505,12 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
   <h2 style="color: #B388FF; margin: 0 0 8px 0; font-size: 18px;">🤖 TIER 3 — AI Analysis (Validate Before Use)</h2>
 </div>
 
-<div style="background: #1A0F14; border: 2px dashed #B388FF; border-radius: 4px; padding: 16px 18px; margin-bottom: 16px;">
+<div style="background: #FAF5FF; border: 2px dashed #7C3AED; border-radius: 4px; padding: 16px 18px; margin-bottom: 16px;">
   <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
     <span style="font-size: 20px;">⚠️</span>
     <strong style="color: #FFB300; font-size: 14px; letter-spacing: 0.3px;">AI GENERATED — NOT FROM YOUR DATA</strong>
   </div>
-  <div style="color: #5A7A8A; font-size: 12px; line-height: 1.6;">
+  <div style="color: #64748B; font-size: 12px; line-height: 1.6;">
     <strong>Source:</strong> LLM training knowledge | <strong>Confidence:</strong> MEDIUM<br>
     <strong>Action Required:</strong> Validate these suggestions against your actual workload before applying
   </div>
@@ -515,11 +558,11 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
             title = re.sub(r'^\d+\.\s*', '', title)
             
             md += f"""
-<div style="background: #0D1318; border-left: 3px solid #B388FF; border-radius: 3px; padding: 14px 16px; margin-bottom: 12px;">
+<div style="background: #FAFAFE; border-left: 3px solid #7C3AED; border-radius: 3px; padding: 14px 16px; margin-bottom: 12px;">
   <div style="color: #B388FF; font-weight: 600; font-size: 13px; margin-bottom: 10px;">
     🤖 {title}
   </div>
-  <div style="color: #C9D1D9; font-size: 12px; line-height: 1.8;">
+  <div style="color: #374151; font-size: 12px; line-height: 1.8;">
     {formatted_body.strip()}
   </div>
 </div>
@@ -528,13 +571,31 @@ def format_app_analysis(result: Dict[str, Any]) -> str:
     else:
         # Empty state for LLM section
         md += """
-<div style="background: #0D1318; border: 1px dashed #1C2A35; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
-  <p style="color: #5A7A8A; font-style: italic; margin: 0;">No AI-generated recommendations needed — sufficient verified data available.</p>
+<div style="background: #FFFFFF; border: 1px dashed #CBD5E0; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
+  <p style="color: #64748B; font-style: italic; margin: 0;">No AI-generated recommendations needed — sufficient verified data available.</p>
 </div>
 
 """
     
     # No text-based feedback request - will use action buttons instead
+
+    # ========================================
+    # FEEDBACK WATERMARK (end of every analysis)
+    # ========================================
+    md += """
+
+---
+
+```
+─────────────────────────────────────────
+Was this analysis helpful?
+  HELPFUL [optional comment]
+  NOT HELPFUL [too generic | wrong for my case | already knew | incorrect]
+  PARTIAL [what was missing]
+Your feedback improves future recommendations.
+─────────────────────────────────────────
+```
+"""
     return md
 
 
@@ -805,15 +866,15 @@ Please verify the application ID exists and has stage summary data in the databa
     llm_analysis = result.get("llm_analysis", "")
     
     md = f"""
-<div style="background: #0D1318; border: 2px solid #FFB300; border-radius: 4px; padding: 16px 20px; margin-bottom: 20px;">
-  <h1 style="margin: 0 0 8px 0; color: #E8F4F8; font-size: 20px;">
+<div style="background: #FFFFFF; border: 2px solid #FFB300; border-radius: 4px; padding: 16px 20px; margin-bottom: 20px;">
+  <h1 style="margin: 0 0 8px 0; color: #0F172A; font-size: 20px;">
     🔍 Skew Analysis: <code style="color: #FFB300;">{app_id}</code>
   </h1>
-  <div style="color: #5A7A8A; font-size: 13px; line-height: 1.6;">
-    <strong style="color: #E8F4F8;">Stages Analyzed:</strong> {stages_analyzed}<br>
-    <strong style="color: #E8F4F8;">Stages with Skew:</strong> {stages_with_skew} 
+  <div style="color: #64748B; font-size: 13px; line-height: 1.6;">
+    <strong style="color: #0F172A;">Stages Analyzed:</strong> {stages_analyzed}<br>
+    <strong style="color: #0F172A;">Stages with Skew:</strong> {stages_with_skew} 
     ({round(100 * stages_with_skew / stages_analyzed if stages_analyzed > 0 else 0, 1)}%)<br>
-    <strong style="color: #E8F4F8;">Source:</strong> Stage telemetry + AI analysis
+    <strong style="color: #0F172A;">Source:</strong> Stage telemetry + AI analysis
   </div>
 </div>
 
@@ -853,9 +914,9 @@ Please verify the application ID exists and has stage summary data in the databa
             md += "\n"
     else:
         md += """
-<div style="background: #0F1A14; border-left: 4px solid #3FB950; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
+<div style="background: #F0FFF4; border-left: 4px solid #107C10; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
   <strong style="color: #3FB950; font-size: 14px;">✅ No Significant Skew Detected</strong>
-  <p style="color: #C9D1D9; font-size: 13px; margin: 8px 0 0 0;">
+  <p style="color: #374151; font-size: 13px; margin: 8px 0 0 0;">
     All stages show balanced task and shuffle distribution (imbalance ratio < 2x).
   </p>
 </div>
@@ -922,16 +983,16 @@ Please verify the application ID exists and has metrics data in the database.
     badge_emoji, badge_text, badge_color = rec_badges.get(recommendation, ("❓", "UNKNOWN", "#5A7A8A"))
     
     md = f"""
-<div style="background: #0D1318; border: 2px solid {badge_color}; border-radius: 4px; padding: 16px 20px; margin-bottom: 20px;">
-  <h1 style="margin: 0 0 8px 0; color: #E8F4F8; font-size: 20px;">
+<div style="background: #FFFFFF; border: 2px solid {badge_color}; border-radius: 4px; padding: 16px 20px; margin-bottom: 20px;">
+  <h1 style="margin: 0 0 8px 0; color: #0F172A; font-size: 20px;">
     {badge_emoji} Scaling Analysis: <code style="color: {badge_color};">{app_id}</code>
   </h1>
-  <div style="color: #5A7A8A; font-size: 13px; line-height: 1.6;">
-    <strong style="color: #E8F4F8;">Recommendation:</strong> <span style="color: {badge_color}; font-weight: 600;">{badge_text}</span><br>
-    <strong style="color: #E8F4F8;">Current Duration:</strong> {duration:.1f}s ({(duration/60):.1f} min)<br>
-    <strong style="color: #E8F4F8;">Current Executors:</strong> {executors}<br>
-    <strong style="color: #E8F4F8;">Predictions Available:</strong> {predictions_count} data points<br>
-    <strong style="color: #E8F4F8;">Source:</strong> SparkLens predictions + application metrics
+  <div style="color: #64748B; font-size: 13px; line-height: 1.6;">
+    <strong style="color: #0F172A;">Recommendation:</strong> <span style="color: {badge_color}; font-weight: 600;">{badge_text}</span><br>
+    <strong style="color: #0F172A;">Current Duration:</strong> {duration:.1f}s ({(duration/60):.1f} min)<br>
+    <strong style="color: #0F172A;">Current Executors:</strong> {executors}<br>
+    <strong style="color: #0F172A;">Predictions Available:</strong> {predictions_count} data points<br>
+    <strong style="color: #0F172A;">Source:</strong> SparkLens predictions + application metrics
   </div>
 </div>
 
@@ -949,21 +1010,21 @@ Please verify the application ID exists and has metrics data in the database.
     # Metrics cards
     md += f"""
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px;">
-  <div style="background: #0D1318; border: 1px solid #243040; border-radius: 4px; padding: 14px;">
-    <div style="color: #5A7A8A; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Duration</div>
-    <div style="color: #E8F4F8; font-size: 20px; font-weight: 600; margin-top: 4px;">{duration:.1f}s</div>
+  <div style="background: #FFFFFF; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 4px; padding: 14px;">
+    <div style="color: #64748B; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Duration</div>
+    <div style="color: #0F172A; font-size: 20px; font-weight: 600; margin-top: 4px;">{duration:.1f}s</div>
   </div>
-  <div style="background: #0D1318; border: 1px solid #243040; border-radius: 4px; padding: 14px;">
-    <div style="color: #5A7A8A; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Executors</div>
-    <div style="color: #E8F4F8; font-size: 20px; font-weight: 600; margin-top: 4px;">{executors}</div>
+  <div style="background: #FFFFFF; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 4px; padding: 14px;">
+    <div style="color: #64748B; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Executors</div>
+    <div style="color: #0F172A; font-size: 20px; font-weight: 600; margin-top: 4px;">{executors}</div>
   </div>
-  <div style="background: #0D1318; border: 1px solid #243040; border-radius: 4px; padding: 14px;">
-    <div style="color: #5A7A8A; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Executor Efficiency</div>
-    <div style="color: #E8F4F8; font-size: 20px; font-weight: 600; margin-top: 4px;">{efficiency:.1f}%</div>
+  <div style="background: #FFFFFF; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 4px; padding: 14px;">
+    <div style="color: #64748B; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Executor Efficiency</div>
+    <div style="color: #0F172A; font-size: 20px; font-weight: 600; margin-top: 4px;">{efficiency:.1f}%</div>
   </div>
-  <div style="background: #0D1318; border: 1px solid #243040; border-radius: 4px; padding: 14px;">
-    <div style="color: #5A7A8A; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Driver Time %</div>
-    <div style="color: #E8F4F8; font-size: 20px; font-weight: 600; margin-top: 4px;">{driver_time:.1f}%</div>
+  <div style="background: #FFFFFF; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 4px; padding: 14px;">
+    <div style="color: #64748B; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Driver Time %</div>
+    <div style="color: #0F172A; font-size: 20px; font-weight: 600; margin-top: 4px;">{driver_time:.1f}%</div>
   </div>
 </div>
 
@@ -983,6 +1044,276 @@ Please verify the application ID exists and has metrics data in the database.
         md += f"\n{llm_analysis}\n\n"
     
     return md
+
+
+def format_trend_analysis(result: Dict[str, Any]) -> str:
+    """
+    Format get_application_trend() result as a Chainlit-ready HTML/markdown response.
+
+    Renders:
+      - A colour-coded trend direction badge (IMPROVING / DEGRADING / STABLE / INSUFFICIENT_DATA)
+      - A markdown table with daily metrics
+      - A mini spark-line style commentary on the trajectory
+    Source tier: Kusto Tier 1 (blue #00D4FF) — all data is from Eventhouse.
+    """
+    app_name = result.get("application_name", "unknown")
+    days = result.get("days", 7)
+    direction = result.get("trend_direction", "INSUFFICIENT_DATA")
+    latest = result.get("latest_score")
+    earliest = result.get("earliest_score")
+    data_points = result.get("data_points", 0)
+    rows = result.get("trend", [])
+
+    if not rows:
+        return f"""
+### 📈 Performance Trend: `{app_name}`
+
+No trend data found for **{app_name}** in the last **{days} days**.
+
+> Source: Kusto — sparklens_metrics | VERIFIED
+
+Possible reasons:
+- The application name doesn't match any entry in `sparklens_metadata`
+- No runs were recorded in the selected time window
+- Try a partial name match (e.g. `my-pipeline` instead of the full name)
+"""
+
+    # Direction badge config
+    direction_cfg = {
+        "IMPROVING":         ("🟢", "#3FB950", "Performance is IMPROVING"),
+        "DEGRADING":         ("🔴", "#FF5252", "Performance is DEGRADING — action recommended"),
+        "STABLE":            ("🟡", "#FFB300", "Performance is STABLE"),
+        "INSUFFICIENT_DATA": ("⚪", "#5A7A8A", "Insufficient data for a trend"),
+    }
+    badge_icon, badge_color, badge_text = direction_cfg.get(
+        direction, ("⚪", "#5A7A8A", direction)
+    )
+
+    # Score delta
+    delta_str = ""
+    if latest is not None and earliest is not None and data_points >= 2:
+        delta = latest - earliest
+        sign = "+" if delta >= 0 else ""
+        delta_str = f" ({sign}{delta:.1f} pts over {data_points} days)"
+
+    md = f"""
+<div style="background:#FFFFFF; border:2px solid {badge_color}; border-radius:4px; padding:16px 20px; margin-bottom:20px;">
+  <h1 style="margin:0 0 8px 0; color:#0F172A; font-size:20px;">
+    {badge_icon} Performance Trend: <code style="color:{badge_color};">{app_name}</code>
+  </h1>
+  <div style="color:#64748B; font-size:13px; line-height:1.8;">
+    <strong style="color:#0F172A;">Direction:</strong>
+      <span style="color:{badge_color}; font-weight:600;">{badge_text}</span>{delta_str}<br>
+    <strong style="color:#0F172A;">Lookback:</strong> {days} days · {data_points} data point(s)<br>
+    <strong style="color:#0F172A;">Latest Score:</strong> {f"{latest:.1f}" if latest is not None else "N/A"} &nbsp;|&nbsp;
+    <strong style="color:#0F172A;">Earliest Score:</strong> {f"{earliest:.1f}" if earliest is not None else "N/A"}<br>
+    <strong style="color:#00D4FF;">Source:</strong> Kusto — sparklens_metrics | VERIFIED
+  </div>
+</div>
+
+"""
+
+    # Daily metrics table
+    md += "### 📅 Daily Breakdown\n\n"
+    md += "| Date | Executor Eff % | GC Overhead % | Skew Ratio | Duration (min) | Score | Health |\n"
+    md += "| --- | --- | --- | --- | --- | --- | --- |\n"
+
+    health_icons = {
+        "EXCELLENT": "🟢",
+        "GOOD":      "🟡",
+        "FAIR":      "🟠",
+        "POOR":      "🔴",
+    }
+
+    for row in rows:
+        run_date = str(row.get("run_date", ""))[:10]          # trim to YYYY-MM-DD
+        eff = float(row.get("eff_pct", 0))
+        gc = float(row.get("gc_overhead_pct", 0))
+        skew = float(row.get("task_skew_ratio", 1))
+        dur = float(row.get("duration_min", 0))
+        score = float(row.get("performance_score", 0))
+        health = row.get("health_label", "UNKNOWN")
+        icon = health_icons.get(health, "⚪")
+        md += (
+            f"| {run_date} | {eff:.1f}% | {gc:.1f}% | {skew:.1f}x "
+            f"| {dur:.1f} | {score:.1f} | {icon} {health} |\n"
+        )
+
+    # Simple trajectory commentary
+    md += "\n"
+    if direction == "DEGRADING":
+        md += (
+            "> ⚠️ **Action Recommended** — Performance has declined. "
+            "Run `analyze <app_id>` on the most recent run for specific recommendations.\n"
+        )
+    elif direction == "IMPROVING":
+        md += (
+            "> ✅ **Trend is Positive** — Recent optimizations appear to be taking effect.\n"
+        )
+    elif direction == "STABLE":
+        md += (
+            "> 📊 **Stable Baseline** — Performance is consistent. "
+            "Check for any planned scaling or config changes.\n"
+        )
+    else:
+        md += "> ℹ️ Only one data point available — run the app more often to establish a trend.\n"
+
+    return md
+
+
+def format_general_chat_response(response_text: str) -> str:
+    """
+    Convert the Semantic Kernel chat response (markdown with ## section headers
+    and code fences) into the same styled HTML card layout used by format_app_analysis().
+
+    Only activates when the response contains the structured section headers
+    produced by SPARK_ADVISOR_SYSTEM_PROMPT.  Other responses (markdown tables,
+    plain text, KQL results) are returned unchanged.
+    """
+    # Only convert responses that contain the SK section format
+    has_kusto_section = "## Spark Advisor Recommendations" in response_text
+    has_fabric_section = "## Fabric Recommendations" in response_text
+    if not has_kusto_section and not has_fabric_section:
+        return response_text
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+    def strip_fences(text: str) -> str:
+        """Remove ```lang and ``` delimiters from text."""
+        text = re.sub(r"^```[a-zA-Z]*\n", "", text, flags=re.MULTILINE)
+        text = re.sub(r"^```\s*$", "", text, flags=re.MULTILINE)
+        return text.strip()
+
+    def strip_source_line(text: str) -> str:
+        """Remove leading **Source:** lines that duplicate the card header."""
+        lines = [l for l in text.split("\n") if not l.strip().startswith("**Source:**")]
+        return "\n".join(lines).strip()
+
+    def to_html_lines(text: str) -> str:
+        return text.replace("\n", "<br>")
+
+    def strip_ai_boxes(text: str) -> str:
+        """Remove the box-drawing AI WARNING block if the LLM already included it."""
+        return re.sub(r"┌─+┐.*?└─+┘", "", text, flags=re.DOTALL).strip()
+
+    # ── parse sections ────────────────────────────────────────────────────────
+    section_re = re.compile(r"^## (.+)$", re.MULTILINE)
+    parts = section_re.split(response_text)
+    # parts = [pre, name, body, name, body, ...]
+    sections: Dict[str, str] = {}
+    for i in range(1, len(parts), 2):
+        if i + 1 < len(parts):
+            sections[parts[i].strip()] = parts[i + 1].strip()
+
+    md = ""
+
+    # ── TIER 1 ────────────────────────────────────────────────────────────────
+    md += """
+<div style="margin-top: 4px;">
+  <div style="background: linear-gradient(90deg, #0099CC, #00D4FF); height: 3px; margin-bottom: 12px;"></div>
+  <h2 style="color: #0078D4; margin: 0 0 8px 0; font-size: 18px;">📊 TIER 1 — Kusto Telemetry (Ground Truth)</h2>
+  <p style="color: #64748B; font-size: 12px; margin: 0 0 16px 0;">
+    <strong>Source:</strong> sparklens_recommedations + fabric_recommedations | <strong>Trust:</strong> ✅ VERIFIED
+  </p>
+</div>
+"""
+
+    for section_key, border_color, label in [
+        ("Spark Advisor Recommendations", "#00D4FF", None),
+        ("Fabric Recommendations",        "#0078D4", "FABRIC RECOMMENDATIONS"),
+    ]:
+        raw = sections.get(section_key, "")
+        if raw:
+            text = strip_source_line(strip_fences(raw))
+            label_html = (
+                f'<div style="color: #64748B; font-size: 11px; letter-spacing: 0.04em; margin-bottom: 6px;">'
+                f'{label}</div>'
+            ) if label else ""
+            md += f"""
+<div style="background: #FFFFFF; border-left: 4px solid {border_color}; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+  {label_html}
+  <div style="color: #0F172A; font-size: 13px; line-height: 1.7;">{to_html_lines(text)}</div>
+</div>
+"""
+        else:
+            empty_label = label if label else "SPARK ADVISOR RECOMMENDATIONS"
+            md += f"""
+<div style="background: #F8FAFC; border: 1px dashed #CBD5E0; border-radius: 4px; padding: 14px 16px; margin-bottom: 12px;">
+  <div style="color: #64748B; font-size: 11px; letter-spacing: 0.04em; margin-bottom: 6px;">{empty_label}</div>
+  <p style="color: #94A3B8; font-style: italic; margin: 0;">No data found in Kusto for this query.</p>
+</div>
+"""
+
+    # ── TIER 2 ────────────────────────────────────────────────────────────────
+    rag_raw = sections.get("Documentation Context", "")
+    if rag_raw:
+        text = strip_source_line(strip_fences(rag_raw))
+        md += """
+<div style="margin-top: 32px;">
+  <div style="background: linear-gradient(90deg, #3FB950, #00E676); height: 3px; margin-bottom: 12px;"></div>
+  <h2 style="color: #107C10; margin: 0 0 8px 0; font-size: 18px;">📚 TIER 2 — Documentation & Best Practices</h2>
+  <p style="color: #64748B; font-size: 12px; margin: 0 0 16px 0;">
+    <strong style="color: #107C10;">Source: RAG — SparkDocumentation / BestPracticeDocs | OFFICIAL DOCS</strong>
+  </p>
+</div>
+"""
+        md += f"""
+<div style="background: #FFFFFF; border: 1px solid #D6EDDA; border-left: 3px solid #107C10; border-radius: 4px; padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+  <div style="color: #374151; font-size: 13px; line-height: 1.7;">{to_html_lines(text)}</div>
+</div>
+"""
+
+    # ── TIER 3 ────────────────────────────────────────────────────────────────
+    llm_raw = sections.get("LLM Analysis", "")
+    if llm_raw:
+        text = strip_ai_boxes(strip_fences(llm_raw))
+        md += """
+<div style="margin-top: 32px;">
+  <div style="background: linear-gradient(90deg, #B388FF, #FF5252); height: 3px; margin-bottom: 12px;"></div>
+  <h2 style="color: #5C2D91; margin: 0 0 8px 0; font-size: 18px;">🤖 TIER 3 — AI Analysis (Validate Before Use)</h2>
+</div>
+<div style="background: #FAF5FF; border: 2px dashed #7C3AED; border-radius: 4px; padding: 16px 18px; margin-bottom: 16px;">
+  <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+    <span style="font-size: 20px;">⚠️</span>
+    <strong style="color: #92400E; font-size: 14px; letter-spacing: 0.3px;">AI GENERATED — NOT FROM YOUR DATA</strong>
+  </div>
+  <div style="color: #64748B; font-size: 12px; line-height: 1.6;">
+    <strong>Source:</strong> LLM training knowledge | <strong>Confidence:</strong> MEDIUM<br>
+    <strong>Action Required:</strong> Validate these suggestions against your actual workload before applying
+  </div>
+</div>
+"""
+        md += f"""
+<div style="background: #FAFAFE; border-left: 3px solid #7C3AED; border-radius: 3px; padding: 14px 16px; margin-bottom: 12px;">
+  <div style="color: #374151; font-size: 13px; line-height: 1.8;">{to_html_lines(text)}</div>
+</div>
+"""
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    summary_raw = sections.get("Summary", "")
+    if summary_raw:
+        text = strip_fences(summary_raw)
+        md += f"""
+<div style="margin-top: 20px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 14px 16px;">
+  <div style="color: #0F172A; font-size: 13px; line-height: 1.7;">{to_html_lines(text)}</div>
+</div>
+"""
+
+    # ── Feedback watermark (matches format_app_analysis) ─────────────────────
+    md += """
+
+---
+
+```
+─────────────────────────────────────────
+Was this analysis helpful?
+  HELPFUL [optional comment]
+  NOT HELPFUL [too generic | wrong for my case | already knew | incorrect]
+  PARTIAL [what was missing]
+Your feedback improves future recommendations.
+─────────────────────────────────────────
+```
+"""
+    return md if md.strip() else response_text
 
 
 # ============================================================================
@@ -1162,7 +1493,11 @@ def get_loading_message(intent: str, params: Dict[str, Any]) -> str:
         
         "show_best_practice_apps": "✅ Finding well-optimized applications...\n\n"
                                   "⏳ Calculating health scores...",
-        
+
+        "analyze_trend": f"📈 Fetching performance trend for `{params.get('application_name', 'application')}` "
+                         f"over the last {params.get('days', 7)} days...\n\n"
+                         "⏳ Querying daily metric bins from Kusto...",
+
         "general_chat": "💭 Thinking..."
     }
     
@@ -1325,12 +1660,12 @@ async def start():
     # Professional branded welcome content
     welcome_content = """
 <div style="
-  background: linear-gradient(145deg, #0A0F14 0%, #0d1318 100%);
-  border: 1px solid rgba(0, 212, 255, 0.15);
+  background: #FFFFFF;
+  border: 1px solid rgba(0, 120, 212, 0.15);
   border-radius: 12px;
   padding: 24px 26px;
   margin-bottom: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), 0 1px 4px rgba(0, 212, 255, 0.05);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 120, 212, 0.06);
   position: relative;
   overflow: hidden;
 ">
@@ -1352,24 +1687,24 @@ async def start():
       box-shadow: 0 4px 12px rgba(0, 212, 255, 0.25);
     ">🎯</div>
     <div>
-      <div style="font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #E8F4F8; letter-spacing: -0.5px;">
+      <div style="font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #0F172A; letter-spacing: -0.5px;">
         Fabric <span style="background: linear-gradient(90deg, #00D4FF, #B388FF); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Spark Advisor</span>
       </div>
-      <div style="font-size: 11px; color: #5A7A8A; letter-spacing: 0.06em; margin-top: 4px; font-weight: 500;">
-        <span style="color: #00D4FF;">●</span> AI-Powered Spark Optimization <span style="color: #3A5060;">·</span> Live Eventhouse Data
+      <div style="font-size: 11px; color: #64748B; letter-spacing: 0.06em; margin-top: 4px; font-weight: 500;">
+        <span style="color: #00D4FF;">●</span> AI-Powered Spark Optimization <span style="color: #94A3B8;">·</span> Live Eventhouse Data
       </div>
     </div>
   </div>
 
   <!-- Description -->
-  <div style="font-size: 13px; color: #8b949e; line-height: 1.8; margin-bottom: 18px; padding-left: 62px; position: relative; z-index: 1;">
+  <div style="font-size: 13px; color: #4A5568; line-height: 1.8; margin-bottom: 18px; padding-left: 62px; position: relative; z-index: 1;">
     Analyzes your Spark applications using <span style="color: #00D4FF; font-weight: 600;">live Kusto data</span>,
     official Fabric docs, and Spark expertise.<br>
     <span style="font-size: 12px; color: #3FB950;">All recommendations show their source</span> — you always know what's from your data vs. AI knowledge.
   </div>
 
   <!-- Source badges -->
-  <div style="display: flex; flex-wrap: wrap; gap: 8px; padding-left: 62px; padding-top: 14px; border-top: 1px solid rgba(28, 42, 53, 0.6); position: relative; z-index: 1;">
+  <div style="display: flex; flex-wrap: wrap; gap: 8px; padding-left: 62px; padding-top: 14px; border-top: 1px solid #E2E8F0; position: relative; z-index: 1;">
     <span style="
       padding: 6px 12px; background: linear-gradient(135deg, rgba(63, 185, 80, 0.1), rgba(63, 185, 80, 0.05));
       border: 1px solid rgba(63, 185, 80, 0.3); font-size: 10px; color: #3FB950;
@@ -1401,7 +1736,7 @@ async def start():
   gap: 12px; font-size: 12px;
 ">
   <div style="
-    background: linear-gradient(145deg, #0D1318 0%, #0a0f14 100%);
+    background: #FFFFFF;
     border: 1px solid rgba(0, 212, 255, 0.2);
     border-radius: 10px; padding: 18px 20px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
@@ -1413,7 +1748,7 @@ async def start():
         APP ANALYSIS
       </div>
     </div>
-    <div style="display: flex; flex-direction: column; gap: 8px; color: #8b949e;">
+    <div style="display: flex; flex-direction: column; gap: 8px; color: #4A5568;">
       <div style="padding: 6px 10px; background: rgba(0, 212, 255, 0.05); border-left: 2px solid rgba(0, 212, 255, 0.3); border-radius: 4px;">> analyze app-123</div>
       <div style="padding: 6px 10px; background: rgba(0, 212, 255, 0.05); border-left: 2px solid rgba(0, 212, 255, 0.3); border-radius: 4px;">> recommendations for application_177..._0001</div>
       <div style="padding: 6px 10px; background: rgba(0, 212, 255, 0.05); border-left: 2px solid rgba(0, 212, 255, 0.3); border-radius: 4px;">> what issues does my-pipeline have?</div>
@@ -1422,7 +1757,7 @@ async def start():
   </div>
 
   <div style="
-    background: linear-gradient(145deg, #0D1318 0%, #0a0f14 100%);
+    background: #FFFFFF;
     border: 1px solid rgba(255, 82, 82, 0.2);
     border-radius: 10px; padding: 18px 20px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
@@ -1434,7 +1769,7 @@ async def start():
         PROBLEM DETECTION
       </div>
     </div>
-    <div style="display: flex; flex-direction: column; gap: 8px; color: #8b949e;">
+    <div style="display: flex; flex-direction: column; gap: 8px; color: #4A5568;">
       <div style="padding: 6px 10px; background: rgba(255, 82, 82, 0.05); border-left: 2px solid rgba(255, 82, 82, 0.3); border-radius: 4px;">> show bad apps</div>
       <div style="padding: 6px 10px; background: rgba(255, 82, 82, 0.05); border-left: 2px solid rgba(255, 82, 82, 0.3); border-radius: 4px;">> show me driver heavy jobs</div>
       <div style="padding: 6px 10px; background: rgba(255, 82, 82, 0.05); border-left: 2px solid rgba(255, 82, 82, 0.3); border-radius: 4px;">> which apps have shuffle spills?</div>
@@ -1443,7 +1778,7 @@ async def start():
   </div>
 
   <div style="
-    background: linear-gradient(145deg, #0D1318 0%, #0a0f14 100%);
+    background: #FFFFFF;
     border: 1px solid rgba(0, 230, 118, 0.2);
     border-radius: 10px; padding: 18px 20px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
@@ -1455,7 +1790,7 @@ async def start():
         HEALTHY APPS
       </div>
     </div>
-    <div style="display: flex; flex-direction: column; gap: 8px; color: #8b949e;">
+    <div style="display: flex; flex-direction: column; gap: 8px; color: #4A5568;">
       <div style="padding: 6px 10px; background: rgba(0, 230, 118, 0.05); border-left: 2px solid rgba(0, 230, 118, 0.3); border-radius: 4px;">> show well optimized apps</div>
       <div style="padding: 6px 10px; background: rgba(0, 230, 118, 0.05); border-left: 2px solid rgba(0, 230, 118, 0.3); border-radius: 4px;">> which apps are healthy?</div>
       <div style="padding: 6px 10px; background: rgba(0, 230, 118, 0.05); border-left: 2px solid rgba(0, 230, 118, 0.3); border-radius: 4px;">> top 5 by executor efficiency</div>
@@ -1464,7 +1799,7 @@ async def start():
   </div>
 
   <div style="
-    background: linear-gradient(145deg, #0D1318 0%, #0a0f14 100%);
+    background: #FFFFFF;
     border: 1px solid rgba(255, 179, 0, 0.2);
     border-radius: 10px; padding: 18px 20px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
@@ -1476,7 +1811,7 @@ async def start():
         GENERAL QUESTIONS
       </div>
     </div>
-   <div style="display: flex; flex-direction: column; gap: 8px; color: #8b949e;">
+   <div style="display: flex; flex-direction: column; gap: 8px; color: #4A5568;">
       <div style="padding: 6px 10px; background: rgba(255, 179, 0, 0.05); border-left: 2px solid rgba(255, 179, 0, 0.3); border-radius: 4px;">> what is shuffle spill?</div>
       <div style="padding: 6px 10px; background: rgba(255, 179, 0, 0.05); border-left: 2px solid rgba(255, 179, 0, 0.3); border-radius: 4px;">> how do I fix GC overhead?</div>
       <div style="padding: 6px 10px; background: rgba(255, 179, 0, 0.05); border-left: 2px solid rgba(255, 179, 0, 0.3); border-radius: 4px;">> what is VOrder in Fabric?</div>
@@ -1488,11 +1823,11 @@ async def start():
 <div style="
   font-family: 'IBM Plex Mono', monospace;
   margin-top: 12px; padding: 14px 18px;
-  background: linear-gradient(145deg, #0D1318 0%, #0a0f14 100%);
+  background: #FFFFFF;
   border: 1px solid rgba(179, 136, 255, 0.15);
   border-radius: 10px;
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 10.5px; color: #5A7A8A;
+  font-size: 10.5px; color: #64748B;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 ">
   <span style="font-weight: 600; letter-spacing: 0.02em;">
@@ -1839,10 +2174,70 @@ async def main(message: cl.Message):
             cl.user_session.set("last_application_id", app_id)
             cl.user_session.set("last_recommendation_count", 1)
             cl.user_session.set("last_source_counts", {"kusto": 1, "rag": 0, "llm": 1})  # Predictions + metrics from Kusto + LLM analysis
-        
+
+        elif intent == "analyze_trend":
+            app_name = params.get("application_name", "")
+            days = params.get("days", 7)
+
+            if not app_name:
+                # Can't proceed without a name — ask instead of crashing
+                await loading.remove()
+                await cl.Message(
+                    content=(
+                        "📈 **Performance Trend** — I need an application name to query.\n\n"
+                        "**Try:** `show trend for my-etl-pipeline over last 14 days`\n"
+                        "or: `is my-notebook-job getting worse?`"
+                    )
+                ).send()
+                return
+
+            async with cl.Step(name="📊 Fetching trend data from Kusto...", type="tool") as step:
+                step.output = f"Application: {app_name} | Lookback: {days} days"
+
+            async with cl.Step(name="📈 Computing daily performance bins...", type="tool") as step:
+                raw = orchestrator.kusto_client.get_application_trend(app_name, days)
+
+                # Compute trend direction (mirrors server.py logic)
+                trend_direction = "INSUFFICIENT_DATA"
+                latest_score = None
+                earliest_score = None
+                if len(raw) >= 2:
+                    scores = [r.get("performance_score", 0) for r in raw]
+                    earliest_score, latest_score = scores[0], scores[-1]
+                    delta = latest_score - earliest_score
+                    trend_direction = "IMPROVING" if delta > 5 else "DEGRADING" if delta < -5 else "STABLE"
+                elif len(raw) == 1:
+                    latest_score = raw[0].get("performance_score")
+                    earliest_score = latest_score
+
+                result = {
+                    "application_name": app_name,
+                    "days": days,
+                    "data_points": len(raw),
+                    "trend_direction": trend_direction,
+                    "latest_score": latest_score,
+                    "earliest_score": earliest_score,
+                    "trend": raw,
+                }
+                step.output = f"✓ {len(raw)} daily data points retrieved"
+
+            response_text = format_trend_analysis(result)
+
+            # Update session state
+            cl.user_session.set("last_query_text", message.content)
+            cl.user_session.set("last_response_text", response_text)
+            cl.user_session.set("last_query_intent", intent)
+            cl.user_session.set("last_application_id", app_name)
+            cl.user_session.set("last_recommendation_count", len(raw))
+            cl.user_session.set("last_source_counts", {"kusto": len(raw), "rag": 0, "llm": 0})
+
         else:  # general_chat
             response_text = await orchestrator.chat(message.content, session_id=session_id)
-            
+
+            # Convert SK section-header format into the same styled HTML cards
+            # used by format_app_analysis().  Non-section responses pass through unchanged.
+            response_text = format_general_chat_response(response_text)
+
             # Detect what type of general chat response was provided
             query_type = None
             row_count = 0
@@ -2018,3 +2413,4 @@ async def handle_quick_start(action: cl.Action):
 if __name__ == "__main__":
     # Run with: chainlit run ui/app.py --port 8501
     pass
+

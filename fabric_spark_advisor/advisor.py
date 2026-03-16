@@ -4,7 +4,13 @@ Main SparkAdvisor class - Entry point for notebook interface.
 import uuid
 from typing import Optional, Dict, Any
 from .client.mcp_client import MCPClient
-from .ui.gradio_app import create_gradio_interface
+
+# Gradio is optional
+try:
+    from .ui.gradio_app import create_gradio_interface
+    _GRADIO_AVAILABLE = True
+except ImportError:
+    _GRADIO_AVAILABLE = False
 
 
 class SparkAdvisor:
@@ -73,6 +79,12 @@ class SparkAdvisor:
             Gradio app instance
         """
         if self._gradio_interface is None:
+            if not _GRADIO_AVAILABLE:
+                raise ImportError(
+                    "gradio is required for the launch() UI. "
+                    "Install it with: pip install gradio>=4.0.0\n"
+                    "Or use show_ui() for the hosted chat interface instead."
+                )
             self._gradio_interface = create_gradio_interface(
                 mcp_client=self.mcp_client,
                 theme=self.theme,

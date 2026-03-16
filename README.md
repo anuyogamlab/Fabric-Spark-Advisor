@@ -11,7 +11,8 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 - **Azure AI Search** for RAG documentation retrieval
 - **Azure Kusto** for telemetry analysis
 - **Semantic Kernel** for agent orchestration
-- **Chainlit** for interactive chat UI
+- **Starlette + uvicorn** for the chat UI backend
+- **Static HTML/JS** — Chat UI served from `ui/chat.html`
 
 ## 🎥 Demo
 
@@ -33,9 +34,9 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 - 📚 **RAG-Enhanced Context** - Official Microsoft Fabric documentation retrieval
 - 🤖 **AI Judge** - GPT-4o validates and ranks recommendations with confidence scoring
 - 💬 **Conversational Interface** - Natural language queries with intent detection
-- 📊 **Multi-Interface Support** - Chainlit UI, VS Code Copilot, Fabric Notebooks, Python API
+- 📊 **Multi-Interface Support** - Chat UI (static HTML), VS Code Copilot, Fabric Notebooks, Python API
 - 🔄 **Feedback Loop** - Learn from user ratings to improve future suggestions
-- ⚡ **8 MCP Tools** - Unified data access with natural language query support
+- ⚡ **10 MCP Tools** - Unified data access with natural language query support
 - 🎨 **Professional UI** - Interactive widgets, rich formatting, clickable feedback
 - 🔐 **Enterprise Ready** - Multi-auth fallback, Azure integration, secure credential handling
 
@@ -51,60 +52,132 @@ AI-powered Apache Spark optimization assistant for Microsoft Fabric, powered by:
 - **RAG Knowledge Base** (Azure AI Search) - Microsoft Fabric Spark documentation
 - **Recommender Notebook** - Generates Fabric-specific recommendations
 
-**MCP Server Layer:**
-- **8 MCP Tools** - Unified data access (SSE protocol, port 8000)
-  - get_spark_recommendations
-  - get_fabric_recommendations
-  - get_application_metrics
-  - get_application_metadata
-  - get_scaling_predictions
-  - get_stage_summary
-  - get_bad_practice_applications
-  - search_recommendations_by_category
+**MCP Server Layer (10 Tools):**
+- **10 MCP Tools** — Unified data access (SSE protocol, port 8000)
+  - `get_application_metrics` · `get_sparklens_recommendations` · `get_fabric_recommendations`
+  - `get_application_metadata` · `get_scaling_predictions` · `get_stage_summary`
+  - `get_bad_practice_applications` · `get_application_summary`
+  - `search_recommendations_by_category` · **`get_application_trend`** *(new)*
 
 **Orchestration & Intelligence:**
-- **Orchestrator** (Semantic Kernel) - 3-layer retrieval: Kusto → RAG → LLM
-- **LLM Judge** (Azure OpenAI GPT-4o) - Validates, ranks, scores confidence
+- **Orchestrator** (Semantic Kernel) — 3-layer retrieval: Kusto → RAG → LLM
+- **LLM Judge** (Azure OpenAI GPT-4o) — Validates, ranks, scores confidence
 
 **User Interfaces:**
-- **Chainlit Chat UI** - Browser-based conversational interface (port 8501)
-- **VSCode Copilot Agent** - Developer workflow integration (MCP .vscode/mcp.json)
-- **Fabric Notebook** - Data engineer ipywidgets UI
+- **Chat UI** — Browser-based conversational interface (Starlette + static HTML, port 7432)
+- **VSCode Copilot Agent** — Developer workflow integration (MCP `.vscode/mcp.json`)
+- **Fabric Notebook** — Data engineer ipywidgets UI
 
-### Data Flow
+### How a Request Flows — Two Examples
+
+#### Example A: "analyze application_1234"  *(app analysis)*
 
 ```
-User Query → Intent Detection → Orchestrator
-                                    ↓
-                              MCP Client
-                                    ↓
-          ┌─────────────────────────┼──────────────────────┐
-          ▼                         ▼                      ▼
-    MCP Tool: Kusto         MCP Tool: RAG          LLM Fallback
-    (get_recommendations)   (search_docs)         (generation)
-          │                         │                      │
-          ▼                         ▼                      ▼
-   Azure Kusto DB          Azure AI Search        Azure OpenAI
-   (SparkLens data)       (Fabric docs)           (GPT-4o)
-          │                         │                      │
-          └─────────────────────────┼──────────────────────┘
-                                    ▼
-                              LLM Judge
-                         (validation & ranking)
-                                    ▼
-                          Validated Results
-                                    ▼
-                          User (formatted)
+You type:  "analyze application_1234"
+                        │
+                        ▼
+          [1] Spell-check / normalize input      ← LLM call
+              e.g. "aplcation" → "application"
+                        │
+                        ▼
+          [2] Semantic Kernel reads your message
+              and picks the right skill automatically
+              (FunctionChoiceBehavior.Auto — no hard-coded if/else)
+                        │
+                        ▼  picks → analyze_app skill
+          [3] Plugin skill calls MCP tools one by one  (agent/plugin.py)
+              ├─ get_application_metrics   ──► Kusto query
+              ├─ get_sparklens_recs        ──► Kusto query
+              ├─ get_fabric_recs           ──► Kusto query
+              └─ get_application_metadata  ──► Kusto query
+                           │
+                           │  all via SSE :8000
+                           ▼
+                  MCP Server (mcp_server/server.py)
+                  10 Kusto-backed tools
+                           │
+                           ▼
+                   Eventhouse / Kusto
+              (sparklens_* tables · feedback)
+                        │
+                        ▼
+          [4] LLM Judge Validates
+                        │
+                        ▼
+          [5] Response → Chat UI
+                        │
+                        ▼
+          [6] User rates response → saved to sparkagent_feedback
+```
+
+#### Example B: "what is VOrder?"  *(general knowledge)*
+
+```
+You type:  "what is VOrder?"
+                        │
+                        ▼
+          [1] Spell-check / normalize input
+                        │
+                        ▼
+          [2] Semantic Kernel picks → search_documentation skill
+                        │
+                        ▼
+          [3] RAG search: Azure AI Search scans
+              indexed Fabric Spark docs  (direct Python call, not via MCP)
+              Returns top 3 matching doc excerpts
+                        │
+                        ▼
+          [4] LLM composes answer using the doc excerpts as context
+                        │
+                        ▼
+          [5] Response → Chat UI
+```
+
+### Target Architecture *(post-demo refactor, 5-8 days)*
+
+```
+User Query
+     │
+     ▼
+ Intent Router ──► AdvisorContext (typed dataclass)
+     │                    │
+     ▼                    ▼
+ Context Builder   (last_app_id, session_history, feedback_prefs)
+     │
+     ├──────────────────────────────────────────────────────────────────┐
+     │  asyncio.gather (parallel — no data dependency)                  │
+     ▼                ▼                  ▼                ▼             │
+Diagnostics     Recommendations    Scaling Agent    Trend Agent        │
+  Agent           Agent + RAG       (predictions)   (daily bins)       │
+(metrics/meta)  (Kusto + AI Search)                                     │
+     │                │                  │                │             │
+     └────────────────┴──────────────────┴────────────────┘             │
+                                  │                                     │
+                                  ▼                                     │
+                         Remediation Agent                              │
+                      (Kusto + RAG config patterns)                     │
+                                  │                                     │
+                                  ▼                                     │
+                             LLM Judge                                  │
+                    (cross-source consistency check)                    │
+                                  │                                     │
+                                  ▼                                     │
+                        Response Formatter                              │
+                    (tier labels, source badges)                        │
+                                  │                                     │
+                                  ▼                                     │
+                        Feedback Capture ◄──────────────────────────────┘
+                       (sparkagent_feedback)
 ```
 
 **Key Architecture Principles:**
-- ✅ **Unified Data Access** - ALL queries flow through MCP tools for consistency
-- ✅ **No Direct Queries** - Orchestrator never bypasses MCP layer
+- ✅ **Unified Data Access** - All Kusto queries flow through MCP tools (10 tools, SSE protocol)
+- ℹ️ **RAG + Judge are direct calls** - Azure AI Search and LLM Judge bypass MCP SSE intentionally (in-process, lower latency)
 - ✅ **Enterprise Auth** - Multi-fallback authentication across all interfaces
 - 📊 **RAG Efficiency** - ~1000 token cost for documentation context justified by improved validation quality
 - 💰 **ROI First** - Preventing one production incident saves far more than token costs
 
-## � Prerequisites
+## 🔧 Prerequisites
 
 **Before installing FSA, you need the Fabric Spark Monitoring infrastructure:**
 
@@ -120,12 +193,12 @@ This MCP tool **consumes** SparkLens data and recommendations. You must first se
 3. **Real-Time Dashboard** - KQL-based monitoring and visualization
 4. **Recommender Notebook** - Generates Fabric-specific optimization recommendations
 5. **Table Schemas** - Pre-configured tables:
-   - `sparklens_recommedations` (Kusto recommendation data)
+   - `sparklens_recommedations` (SparkLens recommendation data)
    - `fabric_recommedations` (Fabric-specific guidance)
    - `sparklens_metrics` (performance metrics)
    - `sparklens_metadata` (Spark config properties)
    - `sparklens_predictions` (scaling what-if scenarios)
-   - `fabric_recommedations`
+   - `sparkagent_feedback` (user feedback)
 
 
 ### Estimated Setup Time
@@ -137,7 +210,7 @@ Once the infrastructure is running and data is flowing, proceed with FSA install
 
 ---
 
-## �🚦 Quick Start
+## 🚦 Quick Start
 
 ### 1️⃣ Install Dependencies
 
@@ -198,21 +271,21 @@ This indexes 5 Microsoft Fabric Spark documentation files with category metadata
 ### 4️⃣ Run the Application
 
 ```bash
-# Start both MCP server and Chainlit UI
+# Start both MCP server and Chat UI
 python run.py
 ```
 
 **This starts:**
 - 📡 **MCP Server** on http://127.0.0.1:8000 (SSE protocol)
-- 🎨 **Chainlit UI** on http://localhost:8501
+- 🎨 **Chat UI** on http://localhost:7432 (Starlette + uvicorn serving `ui/chat.html`)
 
-**Then open:** http://localhost:8501
+**Then open:** http://localhost:7432/chat.html
 
 ## 💻 Usage
 
-### Chainlit UI
+### Chat UI
 
-The chat interface supports natural language queries:
+Open http://localhost:7432/chat.html in your browser. The interface supports natural language queries:
 
 **Analyze a specific application:**
 ```
@@ -252,14 +325,16 @@ The MCP server can be used directly in VS Code with GitHub Copilot Chat.
 
 **Available MCP Tools:**
 
-1. `get_spark_recommendations(application_id)` - SparkLens analysis and recommendations
+1. `get_sparklens_recommendations(application_id)` - SparkLens analysis and recommendations
 2. `get_fabric_recommendations(application_id)` - Fabric-specific optimization guidance
 3. `get_application_metrics(application_id)` - Performance metrics (executor efficiency, GC, skew)
 4. `get_application_metadata(application_id)` - Spark configuration properties and job details
 5. `get_scaling_predictions(application_id)` - What-if scaling scenarios and cost estimates
 6. `get_stage_summary(application_id, stage_id)` - Stage-level performance breakdown
 7. `get_bad_practice_applications(min_violations)` - Find apps with anti-patterns
-8. `search_recommendations_by_category(category)` - Filter by memory/shuffle/join/skew categories
+8. `get_application_summary(application_id)` - Aggregated app health summary
+9. `search_recommendations_by_category(category)` - Filter by memory/shuffle/join/skew categories
+10. `get_application_trend(application_name, days)` - Performance trend over time
 
 > **💡 Natural Language Queries**: The orchestrator automatically translates your questions into appropriate MCP tool calls. 
 
@@ -348,10 +423,10 @@ Simple function-based interface for fast queries:
 
 ### MCP Server (`mcp_server/`)
 
-FastMCP server exposing 8 tools for Spark analysis:
+FastMCP server exposing 10 tools for Spark analysis:
 - **Port**: 8000
 - **Protocol**: SSE (Server-Sent Events)
-- **Tools**: 8 Kusto-backed tools with intelligent query routing
+- **Tools**: 10 Kusto-backed tools
 - **Config**: `.vscode/settings.json`
 
 **Run standalone:**
@@ -399,14 +474,13 @@ Azure OpenAI-based recommendation validator:
 python examples/judge_demo.py
 ```
 
-### UI (`ui/app.py`)
+### UI (Chat UI + `run.py`)
 
-Chainlit chat interface:
-- **7 intent types** with automatic detection
-- **5 response formatters** for different views
-- **Session tracking** with live stats
-- **Follow-up actions** as clickable buttons
-- **Quick-start actions** on launch
+Custom static HTML/JS frontend served by Starlette + uvicorn:
+- **`POST /api/chat`** endpoint handled by `orchestrator.chat()`
+- **Session tracking** via `session_id` in request body
+- **Markdown rendering** of Kusto + LLM responses
+- **Single-page app** — no build step required
 
 ## 🧪 Testing & Demos
 
@@ -448,7 +522,7 @@ Build and run with Docker:
 docker build -t spark-recommender .
 
 # Run container
-docker run -p 8000:8000 -p 8501:8501 \
+docker run -p 8000:8000 -p 7432:7432 \
   --env-file .env \
   spark-recommender
 ```
@@ -466,7 +540,7 @@ az containerapp create \
   --resource-group <your-rg> \
   --environment <your-env> \
   --image <your-acr>.azurecr.io/spark-recommender:latest \
-  --target-port 8501 \
+  --target-port 7432 \
   --ingress external \
   --env-vars-file .env
 ```
@@ -482,7 +556,7 @@ spark-recommender/
 │   ├── JUDGE_README.md        # Judge documentation
 │   └── ORCHESTRATOR_README.md # Orchestrator docs
 ├── mcp_server/                # MCP Server
-│   ├── server.py              # FastMCP server (5 tools)
+│   ├── server.py              # FastMCP server (10 tools)
 │   ├── kusto_client.py        # Kusto/Eventhouse client
 │   └── __init__.py
 ├── rag/                       # RAG System
@@ -492,8 +566,9 @@ spark-recommender/
 │   │   ├── *.md              # 5 Fabric Spark docs
 │   │   └── metadata.json     # Doc metadata
 │   └── README.md
-├── ui/                        # Chainlit UI
-│   ├── app.py                 # Chat interface
+├── ui/                        # Chat UI (Starlette + static HTML)
+│   ├── chat.html              # Browser frontend (single-page app)
+│   ├── app.py                 # Legacy Chainlit app (unused by run.py)
 │   └── README.md              # UI documentation
 ├── examples/                  # Demos & Tests
 │   ├── test_tools.py          # Test MCP tools
@@ -549,9 +624,9 @@ Located in `.vscode/settings.json`:
 - Verify `.env` has Kusto credentials
 - Test Kusto connection: `python mcp_server/kusto_client.py`
 
-### Chainlit UI shows errors
+### Chat UI shows errors
 - Ensure MCP server is running first
-- Check port 8501 is available
+- Check port 7432 is available
 - Verify Azure OpenAI credentials: `AZURE_OPENAI_*`
 
 ### RAG returns no results
@@ -597,7 +672,7 @@ MIT License - See LICENSE file for details
 - **Azure OpenAI** for GPT-4o LLM
 - **FastMCP** for MCP server framework
 - **Semantic Kernel** for agent orchestration
-- **Chainlit** for chat UI framework
+- **Starlette/uvicorn** for chat API backend
 
 ---
 

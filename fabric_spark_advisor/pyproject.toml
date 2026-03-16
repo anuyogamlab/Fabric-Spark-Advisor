@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fabric-spark-advisor"
-version = "0.1.0"
+version = "0.3.0"
 description = "AI-powered Spark performance analysis for Microsoft Fabric"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -21,12 +21,12 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 
-dependencies = [
-    "gradio>=4.0.0",
-    "httpx>=0.25.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
+full = [
+    "httpx>=0.25.0",   # needed by SparkAdvisor / LocalSparkAdvisor
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -42,7 +42,8 @@ Repository = "https://github.com/microsoft/fabric-spark-advisor"
 Issues = "https://github.com/microsoft/fabric-spark-advisor/issues"
 
 [tool.setuptools]
-packages = ["fabric_spark_advisor"]
+packages = ["fabric_spark_advisor", "fabric_spark_advisor.client", "fabric_spark_advisor.ui"]
+package-dir = {"fabric_spark_advisor" = "."}
 
 [tool.setuptools.package-data]
 fabric_spark_advisor = ["py.typed"]

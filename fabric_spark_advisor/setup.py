@@ -4,21 +4,22 @@ Fabric Spark Advisor - Setup Configuration
 A lightweight Python package for analyzing Apache Spark workloads
 in Microsoft Fabric using expert-defined rules and LLM orchestration.
 """
-from setuptools import setup, find_packages
+from setuptools import setup
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
     name="fabric-spark-advisor",
-    version="0.1.0",
+    version="0.3.0",
     author="Microsoft",
     author_email="",
     description="AI-powered Spark performance analysis for Microsoft Fabric",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/microsoft/fabric-spark-advisor",
-    packages=find_packages(),
+    packages=['fabric_spark_advisor', 'fabric_spark_advisor.client', 'fabric_spark_advisor.ui'],
+    package_dir={'fabric_spark_advisor': '.'},
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
@@ -32,11 +33,9 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.9",
-    install_requires=[
-        "gradio>=4.0.0",
-        "httpx>=0.25.0",
-    ],
+    install_requires=[],
     extras_require={
+        "full": ["httpx>=0.25.0"],   # needed by SparkAdvisor / LocalSparkAdvisor
         "dev": [
             "pytest>=7.0.0",
             "pytest-asyncio>=0.21.0",

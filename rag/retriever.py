@@ -21,15 +21,17 @@ class SparkDocRetriever:
         self.credential = AzureKeyCredential(self.key)
         self.search_client = SearchClient(self.endpoint, self.index_name, self.credential)
     
-    def search(self, query: str, top_k: int = 5, category: Optional[str] = None):
+    def search(self, query: str, top_k: int = 5, category: Optional[str] = None, min_score: float = 0.5):
         """
         Search for relevant documents with optional category filtering.
-        
+
         Args:
             query: Search query text
             top_k: Number of results to return
             category: Optional category filter (e.g., "performance", "configuration")
-        
+            min_score: Minimum relevance score — results below this are dropped so the
+                       LLM receives "no results" instead of an unrelated document.
+
         Returns:
             List of matching documents
         """
@@ -38,16 +40,19 @@ class SparkDocRetriever:
         if category:
             # Use OData filter syntax - check if category array contains the value
             filter_expr = f"category/any(c: c eq '{category}')"
-        
+
         results = self.search_client.search(
             search_text=query,
             top=top_k,
             filter=filter_expr,
             select=["id", "content", "title", "category", "source_url", "filename"]
         )
-        
+
         documents = []
         for result in results:
+            score = result.get("@search.score", 0.0)
+            if score < min_score:
+                continue  # drop low-relevance results rather than returning wrong content
             documents.append({
                 "id": result.get("id", ""),
                 "content": result.get("content", ""),
@@ -55,24 +60,25 @@ class SparkDocRetriever:
                 "category": result.get("category", []),
                 "source_url": result.get("source_url", ""),
                 "filename": result.get("filename", ""),
-                "score": result.get("@search.score", 0.0)
+                "score": score
             })
-        
+
         return documents
     
-    def get_context(self, query: str, top_k: int = 3, category: Optional[str] = None) -> str:
+    def get_context(self, query: str, top_k: int = 3, category: Optional[str] = None, min_score: float = 0.5) -> str:
         """
         Get context string for RAG with optional category filtering.
-        
+
         Args:
             query: Search query
             top_k: Number of documents to retrieve
             category: Optional category to filter by
-        
+            min_score: Minimum relevance score threshold
+
         Returns:
-            Formatted context string
+            Formatted context string, or "No relevant documentation found." when nothing passes the threshold.
         """
-        docs = self.search(query, top_k, category=category)
+        docs = self.search(query, top_k, category=category, min_score=min_score)
         
         if not docs:
             return "No relevant documentation found."

@@ -423,7 +423,9 @@ class KustoClient:
             executor_time_pct = maxif(value, metric == "Executor Time %"),
             duration_sec = maxif(value, metric == "Application Duration (sec)"),
             executor_count = maxif(value, metric == "Executor Count"),
-            task_count = maxif(value, metric == "Task Count")
+            task_count = maxif(value, metric == "Task Count"),
+            executor_wall_clock_sec = maxif(value, metric == "Executor Wall Clock Time (sec)"),
+            driver_wall_clock_sec = maxif(value, metric == "Driver Wall Clock Time (sec)")
         | extend 
             app_id = '{application_id}',
             job_type_label = iff(job_type >= 0.5, "STREAMING", "BATCH"),
@@ -456,7 +458,9 @@ class KustoClient:
             executor_time_pct,
             duration_sec,
             executor_count,
-            task_count
+            task_count,
+            executor_wall_clock_sec,
+            driver_wall_clock_sec
         """
         results = self.query_to_dict_list(query)
         return results[0] if results else {
@@ -481,11 +485,13 @@ class KustoClient:
         | where app_id == '{application_id}'
         | project 
             app_id,
-            executor_count = [\"Executor Count\"],
+            executor_count    = [\"Executor Count\"],
             executor_multiplier = [\"Executor Multiplier\"],
             estimated_wallclock = [\"Estimated Executor WallClock\"],
-            estimated_duration = [\"Estimated Total Duration\"]
-        | order by executor_count asc
+            estimated_duration  = [\"Estimated Total Duration\"]
+        | extend multiplier_num = todouble(extract(@'^([0-9.]+)x', 1, tostring(executor_multiplier)))
+        | order by multiplier_num asc
+        | project-away multiplier_num
         """
         return self.query_to_dict_list(query)
     
@@ -573,7 +579,70 @@ class KustoClient:
         | order by stage_id asc
         """
         return self.query_to_dict_list(query)
-    
+
+    def get_application_trend(self, application_name: str, days: int = 7) -> List[Dict[str, Any]]:
+        """
+        Get daily performance trend for an application by name over the last N days.
+
+        Joins sparklens_metadata (to resolve name → app IDs) with sparklens_metrics
+        (pivoted from long format) and bins results into daily buckets.
+
+        Returns one row per day with executor_efficiency, gc_overhead, task_skew_ratio,
+        duration_min, and a computed performance_score.
+        """
+        query = f"""
+        let AppIds = sparklens_metadata
+            | where applicationName has '{application_name}'
+            | project applicationId, applicationName;
+        let MetricsPivot = sparklens_metrics
+            | where metric in (
+                "Executor Efficiency",
+                "GC Overhead",
+                "Task Skew Ratio",
+                "Application Duration (sec)"
+              )
+            | summarize value = max(value) by app_id, metric;
+        AppIds
+        | join kind=inner (MetricsPivot) on $left.applicationId == $right.app_id
+        | summarize
+            executor_efficiency   = maxif(value, metric == "Executor Efficiency"),
+            gc_overhead           = maxif(value, metric == "GC Overhead"),
+            task_skew_ratio       = maxif(value, metric == "Task Skew Ratio"),
+            duration_sec          = maxif(value, metric == "Application Duration (sec)"),
+            application_name      = any(applicationName),
+            app_id                = any(applicationId)
+          by run_date = bin(ingestion_time(), 1d)
+        | where run_date >= ago({days}d)
+        | extend
+            performance_score = round(
+                (executor_efficiency * 30.0)
+                + ((1.0 - gc_overhead) * 20.0)
+                + (30.0 * executor_efficiency)
+                + (iff(task_skew_ratio > 0, 20.0 / task_skew_ratio, 20.0)), 1),
+            duration_min      = round(duration_sec / 60.0, 1),
+            gc_overhead_pct   = round(gc_overhead * 100.0, 1),
+            eff_pct           = round(executor_efficiency * 100.0, 1),
+            health_label      = case(
+                executor_efficiency >= 0.80, "EXCELLENT",
+                executor_efficiency >= 0.65, "GOOD",
+                executor_efficiency >= 0.50, "FAIR",
+                "POOR"
+            )
+        | project
+            run_date,
+            app_id,
+            application_name,
+            executor_efficiency,
+            eff_pct,
+            gc_overhead_pct,
+            task_skew_ratio,
+            duration_min,
+            performance_score,
+            health_label
+        | order by run_date asc
+        """
+        return self.query_to_dict_list(query)
+
     def get_database_schema(self) -> Dict[str, Any]:
         """
         Discover all tables and their columns in the database for LLM-powered queries.

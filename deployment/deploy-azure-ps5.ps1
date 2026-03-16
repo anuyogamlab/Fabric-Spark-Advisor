@@ -190,7 +190,7 @@ if (-not $appExists) {
         --resource-group $RESOURCE_GROUP `
         --environment $CONTAINERAPPS_ENV `
         --image "$ACR_NAME.azurecr.io/spark-advisor-mcp:latest" `
-        --target-port 8000 `
+        --target-port 7432 `
         --ingress external `
         --registry-server "$ACR_NAME.azurecr.io" `
         --registry-username $acrUsername `

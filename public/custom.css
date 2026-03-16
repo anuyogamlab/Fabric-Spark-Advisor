@@ -1,0 +1,79 @@
+/* ============================================================
+   Fabric Spark Advisor — Light Theme Overrides
+   Applied on top of Chainlit's material-ui light theme
+   ============================================================ */
+
+/* ── Page shell ── */
+body,
+#root {
+  background-color: #F8FAFC !important;
+}
+
+/* ── Main content area ── */
+.MuiContainer-root {
+  background-color: #F8FAFC !important;
+}
+
+/* ── Message bubbles ── */
+.message-content {
+  background-color: #FFFFFF !important;
+  border: 1px solid #E2E8F0 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* ── User message bubble ── */
+.message-content.user {
+  background-color: #EFF6FF !important;
+  border-color: #BFDBFE !important;
+}
+
+/* ── Chat input ── */
+.MuiOutlinedInput-root {
+  background-color: #FFFFFF !important;
+  border-radius: 10px !important;
+}
+
+/* ── Sidebar / left panel ── */
+.sidebar,
+[class*="Sidebar"] {
+  background-color: #FFFFFF !important;
+  border-right: 1px solid #E2E8F0 !important;
+}
+
+/* ── Step/tool indicators ── */
+.step-container {
+  background-color: #F1F5F9 !important;
+  border: 1px solid #E2E8F0 !important;
+  border-radius: 6px !important;
+}
+
+/* ── Action buttons (HELPFUL / NOT HELPFUL) ── */
+.MuiChip-root {
+  border-radius: 6px !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #F1F5F9; }
+::-webkit-scrollbar-thumb { background: #CBD5E0; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* ── Code blocks inside messages ── */
+code, pre {
+  background-color: #F1F5F9 !important;
+  border: 1px solid #E2E8F0 !important;
+  border-radius: 4px !important;
+  color: #0F172A !important;
+}
+
+/* ── Links ── */
+a { color: #0078D4 !important; }
+a:hover { color: #005BA1 !important; }
+
+/* ── Typography overrides ── */
+.MuiTypography-root {
+  color: #0F172A !important;
+}

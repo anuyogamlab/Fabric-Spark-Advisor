@@ -168,7 +168,7 @@ if (-not $appExists) {
         --resource-group $RESOURCE_GROUP `
         --environment $CONTAINERAPPS_ENV `
         --image "$acrServer/spark-advisor-mcp:latest" `
-        --target-port 8000 `
+        --target-port 7432 `
         --ingress external `
         --registry-server $acrServer `
         --registry-username $acrUsername `

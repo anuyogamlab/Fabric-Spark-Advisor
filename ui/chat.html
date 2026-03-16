@@ -1,0 +1,2031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fabric Spark Advisor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:wght@300;400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<style>
+/* ─── CSS Variables ────────────────────────────────────────────────────────── */
+:root {
+  /* Surfaces */
+  --bg-base:       #0d1117;
+  --bg-surface:    #161b22;
+  --bg-elevated:   #1c2333;
+  --bg-input:      #21262d;
+  --border:        #30363d;
+  --border-subtle: #21262d;
+
+  /* Fabric accent palette */
+  --fabric-blue:   #0078d4;
+  --fabric-cyan:   #00b7c3;
+  --fabric-teal:   #00897b;
+  --fabric-purple: #7b2fbe;
+  --accent-glow:   rgba(0, 183, 195, 0.15);
+
+  /* Semantic severity */
+  --critical: #f85149;
+  --warning:  #d29922;
+  --info:     #388bfd;
+  --healthy:  #3fb950;
+
+  /* Text */
+  --text-primary:   #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted:     #484f58;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+}
+
+/* ─── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+/* ─── Scrollbar ─────────────────────────────────────────────────────────────  */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ─── Layout Shell ──────────────────────────────────────────────────────────  */
+.shell {
+  display: grid;
+  grid-template-rows: 52px 1fr;
+  grid-template-columns: 220px 1fr;
+  height: 100vh;
+}
+
+/* ─── Topbar ────────────────────────────────────────────────────────────────  */
+.topbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--fabric-blue), var(--fabric-cyan));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.product-name {
+  font-family: 'Syne', sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.product-name span { color: var(--fabric-cyan); }
+
+.live-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--fabric-cyan);
+  border: 1px solid rgba(0, 183, 195, 0.35);
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: rgba(0, 183, 195, 0.06);
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--healthy);
+  box-shadow: 0 0 6px var(--healthy);
+  animation: pulse 2s infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+.status-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+}
+
+.topbar-link {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: color 0.15s ease;
+  cursor: pointer;
+}
+.topbar-link:hover { color: var(--text-secondary); }
+
+.topbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+}
+
+/* ─── Sidebar ───────────────────────────────────────────────────────────────  */
+.sidebar {
+  grid-column: 1;
+  grid-row: 2;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+}
+
+.sidebar-section {
+  padding: 0 10px;
+  margin-bottom: 4px;
+}
+
+.sidebar-section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 8px 8px 4px;
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 8px 0;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  border-left: 2px solid transparent;
+  margin: 1px 0;
+  user-select: none;
+}
+
+.nav-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.nav-item.active {
+  color: var(--fabric-cyan);
+  background: rgba(0, 183, 195, 0.07);
+  border-left-color: var(--fabric-cyan);
+}
+
+.nav-item-icon {
+  font-size: 13px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.nav-item-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-item-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 10px;
+}
+
+.sidebar-spacer { flex: 1; }
+
+.sidebar-footer {
+  padding: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sidebar-footer-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  line-height: 1.6;
+}
+
+/* ─── Main Area ─────────────────────────────────────────────────────────────  */
+.main {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+/* ─── Nav Pills (tab row) ───────────────────────────────────────────────────  */
+.nav-pills-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.nav-pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.nav-pill:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.nav-pill.active {
+  color: var(--fabric-cyan);
+  border-color: rgba(0, 183, 195, 0.4);
+  background: rgba(0, 183, 195, 0.07);
+}
+
+.nav-pills-spacer { flex: 1; }
+
+.session-info {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+
+/* ─── Chat Area ─────────────────────────────────────────────────────────────  */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ─── Input Area ────────────────────────────────────────────────────────────  */
+.input-area {
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  padding: 12px 20px 10px;
+}
+
+.input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.input-box {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  color: var(--text-primary);
+  resize: none;
+  outline: none;
+  min-height: 42px;
+  max-height: 120px;
+  line-height: 1.5;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input-box::placeholder {
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.input-box:focus {
+  border-color: var(--fabric-cyan);
+  box-shadow: 0 0 0 3px rgba(0, 183, 195, 0.08);
+}
+
+.send-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: linear-gradient(135deg, var(--fabric-blue), var(--fabric-cyan));
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.send-btn:hover {
+  opacity: 0.9;
+  transform: scale(1.05);
+}
+
+.input-footer {
+  margin-top: 7px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  text-align: center;
+  letter-spacing: 0.03em;
+}
+
+/* ─── Welcome Screen ────────────────────────────────────────────────────────  */
+.welcome-screen {
+  max-width: 840px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Hero card */
+.hero-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.hero-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--fabric-blue), var(--fabric-cyan), var(--fabric-teal));
+}
+
+.hero-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.hero-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--fabric-blue), var(--fabric-cyan));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  box-shadow: 0 0 16px rgba(0, 183, 195, 0.2);
+  flex-shrink: 0;
+}
+
+.hero-title {
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 22px;
+  color: var(--text-primary);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.hero-title span { color: var(--fabric-cyan); }
+
+.hero-subtitle {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.hero-description {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.hero-description strong { color: var(--fabric-cyan); font-weight: 500; }
+
+.source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+  border: 1px solid;
+}
+
+.chip-kusto  { color: #00b7c3; border-color: rgba(0,183,195,0.3);  background: rgba(0,183,195,0.07); }
+.chip-rag    { color: #7b2fbe; border-color: rgba(123,47,190,0.3); background: rgba(123,47,190,0.07); }
+.chip-llm    { color: #d29922; border-color: rgba(210,153,34,0.3); background: rgba(210,153,34,0.07); }
+.chip-fabric { color: #388bfd; border-color: rgba(56,139,253,0.3); background: rgba(56,139,253,0.07); }
+
+/* Suggestion grid */
+.suggestion-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.suggestion-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.suggestion-panel-header {
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.suggestion-panel-icon { font-size: 13px; }
+
+.suggestion-panel-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.suggestion-item:last-child { border-bottom: none; }
+
+.suggestion-item:hover {
+  color: var(--fabric-cyan);
+  background: var(--bg-input);
+}
+
+.suggestion-prefix {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ─── Chat Messages ─────────────────────────────────────────────────────────  */
+.message-row {
+  display: flex;
+  gap: 12px;
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.message-row.user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--fabric-blue), var(--fabric-cyan));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+  box-shadow: 0 0 8px rgba(0, 183, 195, 0.25);
+  margin-top: 2px;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--fabric-blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  color: #fff;
+}
+
+.message-body { flex: 1; min-width: 0; }
+
+.user-bubble {
+  display: inline-block;
+  max-width: 72%;
+  float: right;
+  background: var(--fabric-blue);
+  color: var(--text-primary);
+  padding: 10px 14px;
+  border-radius: 16px 16px 4px 16px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  line-height: 1.5;
+  clear: both;
+}
+
+.user-bubble code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ─── Assistant Response Components ─────────────────────────────────────────  */
+.response-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Tool step trail */
+.step-trail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-circle {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(63, 185, 80, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: var(--healthy);
+  flex-shrink: 0;
+}
+
+.step-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+/* Health summary card */
+.health-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  position: relative;
+}
+
+.health-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--fabric-blue), var(--fabric-cyan), var(--fabric-teal));
+}
+
+.health-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.health-card-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 3px 9px;
+  border-radius: 20px;
+}
+
+.health-badge.critical { color: var(--critical); background: rgba(248,81,73,0.1);  border: 1px solid rgba(248,81,73,0.25); }
+.health-badge.warning  { color: var(--warning);  background: rgba(210,153,34,0.1); border: 1px solid rgba(210,153,34,0.25); }
+.health-badge.info     { color: var(--info);     background: rgba(56,139,253,0.1); border: 1px solid rgba(56,139,253,0.25); }
+.health-badge.healthy  { color: var(--healthy);  background: rgba(63,185,80,0.1);  border: 1px solid rgba(63,185,80,0.25); }
+
+.health-card-body {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-id-pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--fabric-cyan);
+  background: rgba(0, 183, 195, 0.1);
+  border: 1px solid rgba(0, 183, 195, 0.25);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* Metric tiles */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.metric-tile {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 8px;
+  text-align: center;
+}
+
+.metric-value {
+  font-family: 'Syne', sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1.1;
+  margin-bottom: 4px;
+}
+
+.metric-value.good     { color: var(--healthy); }
+.metric-value.warn     { color: var(--warning); }
+.metric-value.bad      { color: var(--critical); }
+.metric-value.neutral  { color: var(--fabric-cyan); }
+
+.metric-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Tier blocks */
+.tier-block {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.tier-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tier-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.tier-label.kusto  { color: var(--fabric-cyan); }
+.tier-label.rag    { color: var(--fabric-purple); }
+.tier-label.llm    { color: var(--warning); }
+
+.tier-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.tier-badge.verified { color: var(--healthy);       background: rgba(63,185,80,0.1);  border: 1px solid rgba(63,185,80,0.25); }
+.tier-badge.docs     { color: var(--fabric-purple);  background: rgba(123,47,190,0.1); border: 1px solid rgba(123,47,190,0.25); }
+.tier-badge.ai       { color: var(--warning);        background: rgba(210,153,34,0.1); border: 1px solid rgba(210,153,34,0.25); }
+
+.tier-spacer { flex: 1; }
+
+.tier-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.tier-chevron.open { transform: rotate(90deg); }
+
+.tier-body { padding: 10px 12px; }
+
+/* Recommendation items */
+.rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rec-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--border);
+}
+
+.rec-item.critical { border-left-color: var(--critical); }
+.rec-item.warning  { border-left-color: var(--warning); }
+.rec-item.info     { border-left-color: var(--info); }
+.rec-item.healthy  { border-left-color: var(--healthy); }
+
+.rec-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+
+.rec-content { flex: 1; min-width: 0; }
+
+.rec-title {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.rec-desc {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.rec-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--fabric-cyan);
+  padding: 5px 8px;
+  border-radius: 4px;
+  margin-top: 6px;
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.rec-severity {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.rec-severity.critical { color: var(--critical); }
+.rec-severity.warning  { color: var(--warning); }
+.rec-severity.info     { color: var(--info); }
+.rec-severity.healthy  { color: var(--healthy); }
+
+/* AI Warning block */
+.ai-warning-block {
+  background: rgba(210, 153, 34, 0.05);
+  border: 1px solid rgba(210, 153, 34, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.ai-warning-header {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--warning);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-warning-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.ai-warning-content {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(210, 153, 34, 0.15);
+}
+
+/* Response summary */
+.response-summary {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  padding: 8px 0;
+}
+
+.response-summary strong { color: var(--text-primary); font-weight: 500; }
+
+/* Feedback bar */
+.feedback-bar {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.feedback-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.feedback-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.feedback-btn:hover { color: var(--fabric-cyan); border-color: rgba(0, 183, 195, 0.35); }
+.feedback-btn.helpful:hover { color: var(--healthy); border-color: rgba(63,185,80,0.35); }
+.feedback-btn.bad:hover    { color: var(--critical); border-color: rgba(248,81,73,0.35); }
+
+/* ─── Scrollbar in chat area  ───────────────────────────────────────────────  */
+.chat-area::-webkit-scrollbar { width: 5px; }
+.chat-area::-webkit-scrollbar-track { background: transparent; }
+.chat-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ─── Empty state chip ──────────────────────────────────────────────────────  */
+.empty-chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  padding: 3px 10px;
+  border-radius: 20px;
+  display: inline-block;
+  margin-left: 4px;
+}
+
+/* ─── Live backend markdown response ────────────────────────────────────────  */
+.response-text {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.75;
+  word-break: break-word;
+}
+.response-text p { margin: 0 0 10px; }
+.response-text p:last-child { margin-bottom: 0; }
+.response-text h1,.response-text h2,.response-text h3 {
+  font-family: 'Syne', sans-serif;
+  color: var(--text-primary);
+  margin: 16px 0 8px;
+  letter-spacing: 0.02em;
+}
+.response-text h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fabric-cyan); border-bottom: 1px solid var(--border-subtle); padding-bottom: 4px; }
+.response-text h3 { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.response-text strong { color: var(--text-primary); font-weight: 600; }
+.response-text em    { color: var(--accent-warning); font-style: normal; }
+.response-text code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: var(--bg-input);
+  color: var(--fabric-cyan);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-subtle);
+}
+.response-text pre {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.response-text pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.response-text ul, .response-text ol {
+  padding-left: 20px;
+  margin: 6px 0 10px;
+}
+.response-text li { margin-bottom: 4px; }
+/* ─── Markdown table — matches dark theme ───────────────────────────────────  */
+.response-text table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 10px 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+.response-text th {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.response-text td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+.response-text tr:hover td {
+  background: var(--bg-elevated);
+}
+/* ─── Source footer + follow-up block ───────────────────────────────────────  */
+.response-text .source-footer {
+  margin-top: 10px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 6px;
+}
+.response-text blockquote {
+  border-left: 3px solid var(--fabric-cyan);
+  margin: 8px 0;
+  padding: 4px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* ─── Backend error ─────────────────────────────────────────────────────────  */
+.backend-error {
+  background: rgba(248,81,73,0.05);
+  border: 1px solid rgba(248,81,73,0.2);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--critical);
+  line-height: 1.6;
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ─── Topbar ───────────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo-icon">⚡</div>
+      <span class="product-name">Fabric <span>Spark</span> Advisor</span>
+      <span class="live-badge">LIVE · EVENTHOUSE</span>
+    </div>
+    <div class="topbar-right">
+      <div class="live-indicator">
+        <div class="status-dot"></div>
+        <span class="status-label">Kusto · Connected</span>
+      </div>
+      <div class="topbar-divider"></div>
+      <span class="topbar-link" onclick="alert('Docs')">Docs</span>
+      <span class="topbar-link" onclick="alert('Schema')">Schema</span>
+      <span class="topbar-link" onclick="alert('Settings')">Settings</span>
+    </div>
+  </header>
+
+  <!-- ─── Sidebar ─────────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Navigation</div>
+      <div class="nav-item active" onclick="setActiveNav(this)">
+        <span class="nav-item-icon">💬</span>
+        <span class="nav-item-text">Chat</span>
+      </div>
+      <div class="nav-item" onclick="setActiveNav(this)">
+        <span class="nav-item-icon">📊</span>
+        <span class="nav-item-text">Fleet Overview</span>
+      </div>
+      <div class="nav-item" onclick="setActiveNav(this)">
+        <span class="nav-item-icon">🔍</span>
+        <span class="nav-item-text">App Search</span>
+      </div>
+      <div class="nav-item" onclick="setActiveNav(this)">
+        <span class="nav-item-icon">⚖️</span>
+        <span class="nav-item-text">Judge Results</span>
+        <span class="nav-item-badge">NEW</span>
+      </div>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Recent Apps</div>
+      <div class="nav-item" onclick="sendFromSidebar('analyze application_1771441543262_0001')">
+        <span class="nav-item-icon">📌</span>
+        <span class="nav-item-text">_0001</span>
+        <span class="nav-item-badge">HIGH</span>
+      </div>
+      <div class="nav-item" onclick="sendFromSidebar('analyze application_1771441543262_0018')">
+        <span class="nav-item-icon">📌</span>
+        <span class="nav-item-text">_0018</span>
+      </div>
+      <div class="nav-item" onclick="sendFromSidebar('analyze application_1771441543262_0011')">
+        <span class="nav-item-icon">📌</span>
+        <span class="nav-item-text">_0011</span>
+      </div>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Fleet Health</div>
+      <div class="nav-item" onclick="sendFromSidebar('show top 5 slowest apps')">
+        <span class="nav-item-icon">🐢</span>
+        <span class="nav-item-text">Slowest Apps</span>
+      </div>
+      <div class="nav-item" onclick="sendFromSidebar('show apps with critical issues')">
+        <span class="nav-item-icon">🔴</span>
+        <span class="nav-item-text">Critical Issues</span>
+      </div>
+      <div class="nav-item" onclick="sendFromSidebar('fleet summary')">
+        <span class="nav-item-icon">🌐</span>
+        <span class="nav-item-text">Fleet Summary</span>
+      </div>
+    </div>
+
+    <div class="sidebar-spacer"></div>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-text">
+        semantic-kernel · 1.1.0<br />
+        SparkLens · RAG · Kusto<br />
+        © 2026 Microsoft Fabric
+      </div>
+    </div>
+  </aside>
+
+  <!-- ─── Main ────────────────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- Nav pills -->
+    <div class="nav-pills-bar">
+      <div class="nav-pill active" onclick="setActivePill(this)">Analysis</div>
+      <div class="nav-pill" onclick="setActivePill(this)">Recommendations</div>
+      <div class="nav-pill" onclick="setActivePill(this)">Scaling</div>
+      <div class="nav-pill" onclick="setActivePill(this)">Trends</div>
+      <div class="nav-pill" onclick="setActivePill(this)">Docs</div>
+      <div class="nav-pills-spacer"></div>
+      <span class="session-info" id="sessionInfo">Session · 00:00</span>
+    </div>
+
+    <!-- Chat area -->
+    <div class="chat-area" id="chatArea">
+
+      <!-- ─── Welcome Screen ─────────────────────────────────────────────── -->
+      <div class="welcome-screen" id="welcomeScreen">
+
+        <!-- Hero card -->
+        <div class="hero-card">
+          <div class="hero-header">
+            <div class="hero-icon">⚡</div>
+            <div>
+              <div class="hero-title">Fabric <span>Spark</span> Advisor</div>
+              <div class="hero-subtitle">Real-time · SparkLens analysis · Kusto telemetry</div>
+            </div>
+          </div>
+          <div class="hero-description">
+            Connected to <strong>live Eventhouse telemetry</strong>. Query your Spark workloads with
+            <strong>evidence-first analysis</strong> — every finding cites its source table.
+            Tier 1 data is always shown verbatim, never paraphrased or re-scored.
+          </div>
+          <div class="source-chips">
+            <span class="source-chip chip-kusto">✦ Kusto Telemetry</span>
+            <span class="source-chip chip-fabric">● Fabric Recommendations</span>
+            <span class="source-chip chip-rag">◈ SparkDocs RAG</span>
+            <span class="source-chip chip-llm">△ GPT-4o Fallback</span>
+          </div>
+        </div>
+
+        <!-- Suggestion grid -->
+        <div class="suggestion-grid">
+
+          <!-- App Analysis -->
+          <div class="suggestion-panel">
+            <div class="suggestion-panel-header">
+              <span class="suggestion-panel-icon">🔬</span>
+              <span class="suggestion-panel-label">App Analysis</span>
+            </div>
+            <div class="suggestion-item" onclick="fillInput('analyze application_1771441543262_0001')">
+              <span class="suggestion-prefix">›</span>
+              analyze application_XXX_XXXX
+            </div>
+            <div class="suggestion-item" onclick="fillInput('compare application_1771441543262_0001 and application_1771439272185_0001')">
+              <span class="suggestion-prefix">›</span>
+              compare app A and app B
+            </div>
+            <div class="suggestion-item" onclick="fillInput('improve performance for application_1771441543262_0001')">
+              <span class="suggestion-prefix">›</span>
+              improve performance app XXX
+            </div>
+            <div class="suggestion-item" onclick="fillInput('show trend for application_1771441543262_0001')">
+              <span class="suggestion-prefix">›</span>
+              show trend for app XXX
+            </div>
+          </div>
+
+          <!-- Problem Detection -->
+          <div class="suggestion-panel">
+            <div class="suggestion-panel-header">
+              <span class="suggestion-panel-icon">⚠️</span>
+              <span class="suggestion-panel-label">Problem Detection</span>
+            </div>
+            <div class="suggestion-item" onclick="fillInput('show apps with critical issues')">
+              <span class="suggestion-prefix">›</span>
+              show apps with critical issues
+            </div>
+            <div class="suggestion-item" onclick="fillInput('find apps with high GC overhead')">
+              <span class="suggestion-prefix">›</span>
+              find apps with high GC overhead
+            </div>
+            <div class="suggestion-item" onclick="fillInput('which apps have driver bottleneck')">
+              <span class="suggestion-prefix">›</span>
+              which apps have driver bottleneck
+            </div>
+            <div class="suggestion-item" onclick="fillInput('show streaming jobs with skew')">
+              <span class="suggestion-prefix">›</span>
+              show streaming jobs with skew
+            </div>
+          </div>
+
+          <!-- Performance -->
+          <div class="suggestion-panel">
+            <div class="suggestion-panel-header">
+              <span class="suggestion-panel-icon">📈</span>
+              <span class="suggestion-panel-label">Performance</span>
+            </div>
+            <div class="suggestion-item" onclick="fillInput('show top 5 slowest apps')">
+              <span class="suggestion-prefix">›</span>
+              show top 5 slowest apps
+            </div>
+            <div class="suggestion-item" onclick="fillInput('show best performing apps')">
+              <span class="suggestion-prefix">›</span>
+              show best performing apps
+            </div>
+            <div class="suggestion-item" onclick="fillInput('fleet summary')">
+              <span class="suggestion-prefix">›</span>
+              fleet summary
+            </div>
+            <div class="suggestion-item" onclick="fillInput('show recent applications')">
+              <span class="suggestion-prefix">›</span>
+              show recent applications
+            </div>
+          </div>
+
+          <!-- Documentation -->
+          <div class="suggestion-panel">
+            <div class="suggestion-panel-header">
+              <span class="suggestion-panel-icon">📖</span>
+              <span class="suggestion-panel-label">Documentation</span>
+            </div>
+            <div class="suggestion-item" onclick="fillInput('what is VOrder and how does it work')">
+              <span class="suggestion-prefix">›</span>
+              what is VOrder
+            </div>
+            <div class="suggestion-item" onclick="fillInput('explain executor efficiency metric')">
+              <span class="suggestion-prefix">›</span>
+              explain executor efficiency
+            </div>
+            <div class="suggestion-item" onclick="fillInput('what causes shuffle spill in Spark')">
+              <span class="suggestion-prefix">›</span>
+              what causes shuffle spill
+            </div>
+            <div class="suggestion-item" onclick="fillInput('how to configure NEE in Fabric')">
+              <span class="suggestion-prefix">›</span>
+              how to configure NEE in Fabric
+            </div>
+          </div>
+
+        </div><!-- /suggestion-grid -->
+
+      </div><!-- /welcome-screen -->
+
+    </div><!-- /chat-area -->
+
+    <!-- Input area -->
+    <div class="input-area">
+      <div class="input-row">
+        <textarea
+          class="input-box"
+          id="inputBox"
+          rows="1"
+          placeholder="analyze application_XXXXXXXXXX_XXXX — or ask a question"
+          onkeydown="handleKey(event)"
+          oninput="autoResize(this)"
+        ></textarea>
+        <button class="send-btn" onclick="sendMessage()" title="Send">
+          ↑
+        </button>
+      </div>
+      <div class="input-footer">
+        Fabric Spark Advisor · Data sourced from live Eventhouse · Tier 1 responses are verbatim Kusto data
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ─── JavaScript ────────────────────────────────────────────────────────── -->
+<script>
+/* ─── API Base URL ────────────────────────────────────────────────────────────
+   When chat.html is served FROM the container, leave API_BASE as empty string
+   (relative URL). When opened from Fabric Notebook or any external origin,
+   set this to the ACA container URL so cross-origin requests work.
+   ─────────────────────────────────────────────────────────────────────────── */
+// ACA container URL — all /api/chat calls go here regardless of where this page is served.
+// Set to '' to use the local server (localhost:7432) instead.
+const API_BASE = 'https://spark-advisor-mcp.livelyground-08e83d90.eastus.azurecontainerapps.io';  // '' = local server
+
+/* ─── Session ID — stable per page load, sent with every /api/chat call ─────  */
+const SESSION_ID = 'sess-' + Math.random().toString(36).slice(2, 10);
+
+/* ─── Session timer ─────────────────────────────────────────────────────────  */
+const sessionStart = Date.now();
+setInterval(() => {
+  const elapsed = Math.floor((Date.now() - sessionStart) / 1000);
+  const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+  const s = String(elapsed % 60).padStart(2, '0');
+  document.getElementById('sessionInfo').textContent = `Session · ${m}:${s}`;
+}, 1000);
+
+/* ─── Nav interactions ──────────────────────────────────────────────────────  */
+function setActiveNav(el) {
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function setActivePill(el) {
+  document.querySelectorAll('.nav-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+}
+
+/* ─── Input helpers ─────────────────────────────────────────────────────────  */
+function fillInput(text) {
+  const box = document.getElementById('inputBox');
+  box.value = text;
+  box.focus();
+  autoResize(box);
+}
+
+function sendFromSidebar(text) {
+  fillInput(text);
+  sendMessage();
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+/* ─── Render helpers ────────────────────────────────────────────────────────  */
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function appIdPill(id) {
+  return `<span class="app-id-pill">${escHtml(id)}</span>`;
+}
+
+function severityClass(sev) {
+  if (!sev) return 'info';
+  const s = sev.toUpperCase();
+  if (s === 'CRITICAL') return 'critical';
+  if (s === 'HIGH')     return 'warning';
+  if (s === 'MEDIUM')   return 'info';
+  return 'healthy';
+}
+
+function severityIcon(sev) {
+  if (!sev) return '📋';
+  const s = sev.toUpperCase();
+  if (s === 'CRITICAL') return '🔴';
+  if (s === 'HIGH')     return '🟠';
+  if (s === 'MEDIUM')   return '🟡';
+  return '🟢';
+}
+
+/* ─── Message rendering ─────────────────────────────────────────────────────  */
+function renderUserMessage(text) {
+  return `
+    <div class="message-row user">
+      <div class="user-avatar">U</div>
+      <div class="message-body">
+        <div class="user-bubble">${escHtml(text)}</div>
+      </div>
+    </div>`;
+}
+
+function renderStepTrail(steps) {
+  return steps.map(s => `
+    <div class="step-item">
+      <div class="step-circle">✓</div>
+      <span class="step-text">${s}</span>
+    </div>`).join('');
+}
+
+function renderSourceChips(chips) {
+  return chips.map(([type, label]) => `<span class="source-chip chip-${type}">${label}</span>`).join('');
+}
+
+function renderTierBlock(tierClass, tierLabel, badgeClass, badgeLabel, bodyHtml, open) {
+  const chevClass = open ? 'open' : '';
+  const bodyStyle = open ? '' : 'display:none';
+  return `
+    <div class="tier-block">
+      <div class="tier-header" onclick="toggleTier(this)">
+        <span class="source-chip chip-${tierClass === 'kusto' ? 'kusto' : tierClass === 'rag' ? 'rag' : 'llm'}">${tierLabel}</span>
+        <span class="tier-spacer"></span>
+        <span class="tier-badge ${badgeClass}">${badgeLabel}</span>
+        <span class="tier-chevron ${chevClass}">▶</span>
+      </div>
+      <div class="tier-body" style="${bodyStyle}">${bodyHtml}</div>
+    </div>`;
+}
+
+function toggleTier(header) {
+  const body = header.nextElementSibling;
+  const chevron = header.querySelector('.tier-chevron');
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? 'block' : 'none';
+  chevron.classList.toggle('open', hidden);
+}
+
+function renderRecItem(sev, title, desc, code) {
+  const cls = severityClass(sev);
+  const icon = severityIcon(sev);
+  const codeHtml = code ? `<code class="rec-code">${escHtml(code)}</code>` : '';
+  return `
+    <div class="rec-item ${cls}">
+      <span class="rec-icon">${icon}</span>
+      <div class="rec-content">
+        <div class="rec-title">${escHtml(title)}</div>
+        <div class="rec-desc">${escHtml(desc)}</div>
+        ${codeHtml}
+      </div>
+      <span class="rec-severity ${cls}">${sev ? sev.toUpperCase() : ''}</span>
+    </div>`;
+}
+
+function renderMetricGrid(tiles) {
+  // tiles: [{label, value, colorClass}]
+  return `<div class="metric-grid">` +
+    tiles.map(t => `
+      <div class="metric-tile">
+        <div class="metric-value ${t.colorClass}">${escHtml(String(t.value))}</div>
+        <div class="metric-label">${escHtml(t.label)}</div>
+      </div>`).join('') +
+    `</div>`;
+}
+
+function renderFeedbackBar() {
+  return `
+    <div class="feedback-bar">
+      <span class="feedback-label">Was this helpful?</span>
+      <button class="feedback-btn helpful" onclick="feedback('helpful', this)">HELPFUL</button>
+      <button class="feedback-btn" onclick="feedback('partial', this)">PARTIAL</button>
+      <button class="feedback-btn bad" onclick="feedback('not-helpful', this)">NOT HELPFUL</button>
+    </div>`;
+}
+
+function feedback(type, btn) {
+  btn.closest('.feedback-bar').querySelectorAll('.feedback-btn').forEach(b => b.style.opacity = '0.4');
+  btn.style.opacity = '1';
+  btn.style.cursor = 'default';
+}
+
+/* ─── Live response renderers ───────────────────────────────────────────────  */
+function renderTextResponse(text) {
+  const html = (typeof marked !== 'undefined')
+    ? marked.parse(text, {breaks: true, gfm: true})
+    : '<pre style="white-space:pre-wrap;font-size:12px">' + escHtml(text) + '</pre>';
+  return `
+    <div class="response-container">
+      <div class="response-text">${html}</div>
+      ${renderFeedbackBar()}
+    </div>`;
+}
+
+function renderErrorResponse(msg) {
+  return `
+    <div class="response-container">
+      <div class="backend-error">
+        ❌ Backend error — ${escHtml(msg)}<br/><br/>
+        Make sure <code>python run.py</code> is running and
+        <code>az login</code> is complete.
+      </div>
+    </div>`;
+}
+
+/* ─── Demo response builder (offline fallback) ──────────────────────────────  */
+function buildDemoResponse(userText) {
+  const lower = userText.toLowerCase();
+
+  /* ── App analysis ────── */
+  if (lower.includes('analyze') && lower.match(/application_\d+_\d+/i)) {
+    const appId = lower.match(/application_\d+_\d+/i)[0];
+    const displayId = appId.replace(/analyze\s*/i, '');
+
+    const steps = [
+      '🔍  Fetching Kusto telemetry — sparklens_metrics',
+      '📊  Running heuristic analysis — 4 metrics evaluated',
+      '📋  Loading SparkLens recommendations',
+      '🏭  Loading Fabric recommendations',
+      '⚖️  LLM Judge validation — 3 recommendations ranked',
+    ];
+
+    const healthHeader = `
+      <div class="health-card">
+        <div class="health-card-header">
+          <span class="health-card-title">Application Health</span>
+          <span class="health-badge healthy">✅ GOOD · Score 76</span>
+        </div>
+        <div class="health-card-body">
+          ${appIdPill(displayId)}
+          <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:var(--text-muted)">
+            &nbsp;· Batch · 1m 49s runtime
+          </span>
+        </div>
+        ${renderMetricGrid([
+          {label:'Executor Eff', value:'57.3%', colorClass:'warn'},
+          {label:'Parallelism',  value:'100%',  colorClass:'good'},
+          {label:'GC Overhead',  value:'6.6%',  colorClass:'neutral'},
+          {label:'Task Skew',    value:'1.95×', colorClass:'neutral'},
+        ])}
+      </div>`;
+
+    const sparklensBody = `
+      <div class="rec-list">
+        ${renderRecItem('HIGH',
+          'Architecture — Driver Overhead (85.2%)',
+          '85.2% of total runtime is driver-side computation. Executors are mostly idle. This job runs faster on a single-node pool.',
+          'spark.executor.instances=0  # use single-node pool'
+        )}
+        ${renderRecItem('LOW',
+          'No critical executor or GC issues detected',
+          'Executor efficiency (57.3%) and GC overhead (6.6%) are within acceptable ranges. Primary bottleneck is driver-side.',
+          ''
+        )}
+      </div>`;
+
+    const fabricBody = `
+      <div class="rec-list">
+        ${renderRecItem('HIGH',
+          'VOrder Not Enabled for Delta Writes',
+          'Enable VOrder to optimize Parquet layout for Fabric OneLake read patterns.',
+          'spark.sql.parquet.vorder.enabled = true'
+        )}
+        ${renderRecItem('INFO',
+          'Consider Starter Pool for Short Jobs',
+          'Jobs under 15 minutes benefit from Fabric Starter Pool (no cold start penalty).',
+          ''
+        )}
+      </div>`;
+
+    const tier1 = renderTierBlock('kusto', '✦ SparkLens Recommendations', 'verified', '✅ VERIFIED', sparklensBody, true);
+    const tier2 = renderTierBlock('kusto', '● Fabric Recommendations',    'verified', '✅ VERIFIED', fabricBody, true);
+
+    const chipRow = `<div class="source-chips">
+      <span class="source-chip chip-kusto">✦ sparklens_recommedations</span>
+      <span class="source-chip chip-fabric">● fabric_recommedations</span>
+    </div>`;
+
+    const summary = `<div class="response-summary">
+      <strong>Bottom line:</strong> Driver-heavy job (85.2% driver time). Executors are largely idle.
+      Move to a single-node pool to eliminate wasted executor cost. Fabric NEE and FastOptimize are disabled — enable both for additional gains.
+    </div>`;
+
+    return `
+      <div class="response-container">
+        <div class="step-trail">${renderStepTrail(steps)}</div>
+        ${healthHeader}
+        ${tier1}
+        ${tier2}
+        ${chipRow}
+        ${summary}
+        ${renderFeedbackBar()}
+      </div>`;
+  }
+
+  /* ── Slowest apps ────── */
+  if (lower.includes('slowest') || lower.includes('top') && lower.includes('app')) {
+    const steps = [
+      '🔍  Querying sparklens_metrics — metric = Application Duration (sec)',
+      '📊  Ranking top 5 by wall-clock duration',
+    ];
+
+    const rows = [
+      {id:'application_1771439776896_0001', time:'1m 53s', driverPct:'86%', score:71, label:'GOOD'},
+      {id:'application_1771442017959_0001', time:'1m 52s', driverPct:'85%', score:74, label:'GOOD'},
+      {id:'application_1771439272185_0001', time:'1m 45s', driverPct:'91%', score:56, label:'FAIR'},
+      {id:'application_1771438760044_0001', time:'1m 43s', driverPct:'95%', score:47, label:'POOR'},
+      {id:'application_1771441543262_0001', time:'1m 40s', driverPct:'85%', score:76, label:'GOOD'},
+    ];
+
+    const tableBody = `
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;padding:4px 8px;">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--text-muted)">Application ID</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--text-muted)">App Duration</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--text-muted)">Driver %</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--text-muted)">Score</span>
+        </div>
+        ${rows.map(r => {
+          const sc = r.score < 50 ? 'critical' : r.score < 65 ? 'warning' : 'healthy';
+          return `<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;padding:6px 8px;background:var(--bg-input);border-radius:var(--radius-sm);align-items:center;cursor:pointer" onclick="fillInput('analyze ${r.id}')">
+            ${appIdPill(r.id)}
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-secondary)">${r.time}</span>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent-warning)">${r.driverPct}</span>
+            <span class="health-badge ${sc}" style="font-size:9px">${r.score} ${r.label}</span>
+          </div>`;
+        }).join('')}
+      </div>`;
+
+    const tier1 = renderTierBlock('kusto', '✦ sparklens_metrics', 'verified', '✅ VERIFIED', tableBody, true);
+
+    return `
+      <div class="response-container">
+        <div class="step-trail">${renderStepTrail(steps)}</div>
+        ${tier1}
+        <div class="source-chips">
+          <span class="source-chip chip-kusto">✦ sparklens_metrics · Application Duration (sec)</span>
+        </div>
+        <div class="response-summary">
+          All 5 apps have high Driver Time % (85–95%). These are driver-heavy jobs — scaling executors will not help. Reply with an app ID to analyze, or type <code style="background:var(--bg-input);padding:1px 5px;border-radius:3px">show bad apps</code> to see worst performers by score.
+        </div>
+        ${renderFeedbackBar()}
+      </div>`;
+  }
+
+  /* ── Explain metric ──── */
+  if (lower.includes('explain') || lower.includes('what is') || lower.includes('what does')) {
+    const steps = ['📖  Searching SparkDocs RAG index'];
+    const ragBody = `
+      <div style="font-family:'DM Sans',sans-serif;font-size:13px;color:var(--text-secondary);line-height:1.7;">
+        <strong style="color:var(--text-primary)">Executor Efficiency</strong> measures the percentage of allocated
+        executor CPU time that was spent doing useful task work, as opposed to idle waiting, shuffle overhead,
+        or garbage collection pauses.
+        <br/><br/>
+        Formula: <code class="rec-code">useful_executor_time / total_allocated_executor_time</code>
+        <br/><br/>
+        <strong style="color:var(--text-secondary)">Thresholds:</strong><br/>
+        &gt; 60% — acceptable &nbsp;·&nbsp; &gt; 80% — good &nbsp;·&nbsp; &lt; 40% — CRITICAL action required
+      </div>`;
+
+    const tier2 = renderTierBlock('rag', '◈ SparkDocs RAG', 'docs', '📖 OFFICIAL DOCS', ragBody, true);
+
+    return `
+      <div class="response-container">
+        <div class="step-trail">${renderStepTrail(steps)}</div>
+        ${tier2}
+        <div class="source-chips">
+          <span class="source-chip chip-rag">◈ executor-efficiency-guide.md</span>
+        </div>
+        ${renderFeedbackBar()}
+      </div>`;
+  }
+
+  /* ── Fleet summary ────── */
+  if (lower.includes('fleet') || lower.includes('summary') || lower.includes('overview')) {
+    const steps = [
+      '🔍  Querying sparklens_metrics — aggregating all apps',
+      '📊  Computing performance score distribution',
+    ];
+
+    const statsBody = `
+      ${renderMetricGrid([
+        {label:'Total Apps',    value:'142',  colorClass:'neutral'},
+        {label:'Batch Jobs',    value:'119',  colorClass:'neutral'},
+        {label:'Streaming',     value:'23',   colorClass:'neutral'},
+        {label:'Avg Score',     value:'61.4', colorClass:'warn'},
+      ])}
+      ${renderMetricGrid([
+        {label:'Excellent 80+', value:'18',   colorClass:'good'},
+        {label:'Good 65–79',    value:'47',   colorClass:'good'},
+        {label:'Fair 50–64',    value:'52',   colorClass:'warn'},
+        {label:'Poor <50',      value:'25',   colorClass:'bad'},
+      ])}`;
+
+    const healthCard = `
+      <div class="health-card">
+        <div class="health-card-header">
+          <span class="health-card-title">Fleet · 142 Applications</span>
+          <span class="health-badge warning">⚠ FAIR · Avg 61.4</span>
+        </div>
+        ${statsBody}
+      </div>`;
+
+    return `
+      <div class="response-container">
+        <div class="step-trail">${renderStepTrail(steps)}</div>
+        ${healthCard}
+        <div class="source-chips">
+          <span class="source-chip chip-kusto">✦ sparklens_metrics · fleet_summary skill</span>
+        </div>
+        <div class="response-summary">
+          <strong>25 applications</strong> are below threshold (POOR score &lt;50) and need
+          immediate attention. Reply with <code style="font-family:'JetBrains Mono',monospace;font-size:11px;background:rgba(0,183,195,0.08);color:var(--fabric-cyan);padding:1px 6px;border-radius:4px">show apps with critical issues</code> to investigate.
+        </div>
+        ${renderFeedbackBar()}
+      </div>`;
+  }
+
+  /* ── Scaling follow-up ────── */
+  if (lower.includes('scal') || lower.includes('more executor') || lower.includes('add executor') || lower.includes('increase executor')) {
+    const steps = [
+      '🔗  Resolved reference → application_1771439776896_0001',
+      '🔍  Fetching sparklens_predictions — analyze_scaling skill',
+      '📊  Evaluating executor scaling scenarios',
+    ];
+
+    const scalingBody = `
+      <div style="padding:4px 0 10px;font-size:13px;color:var(--text-secondary);line-height:1.7">
+        <strong style="color:var(--text-primary)">No — scaling executors will not improve this job.</strong><br/><br/>
+        <span style="color:var(--text-muted)">Source: sparklens_predictions</span><br/><br/>
+        <strong>Driver Time: 96.4%</strong> of total runtime is driver-side coordination.
+        Executors are idle 96.4% of the time. Adding more executors increases cost with no throughput gain.<br/><br/>
+        <div style="background:rgba(255,160,0,0.07);border:1px solid rgba(255,160,0,0.25);border-radius:6px;padding:10px 14px;margin-top:6px">
+          <div style="font-size:11px;font-weight:600;color:var(--warn-color);margin-bottom:6px">SCALING PREDICTION (sparklens_predictions)</div>
+          <table style="width:100%;font-size:12px;border-collapse:collapse">
+            <tr style="color:var(--text-muted)"><th style="text-align:left;padding:2px 8px 2px 0">Executors</th><th style="text-align:right;padding:2px 0">Predicted Duration</th><th style="text-align:right;padding:2px 0 2px 8px">Improvement</th></tr>
+            <tr><td style="padding:3px 8px 3px 0">1 (current)</td><td style="text-align:right">113s</td><td style="text-align:right;color:var(--text-muted)">baseline</td></tr>
+            <tr><td style="padding:3px 8px 3px 0">2</td><td style="text-align:right">110s</td><td style="text-align:right;color:var(--warn-color)">−2.7%</td></tr>
+            <tr><td style="padding:3px 8px 3px 0">4</td><td style="text-align:right">108s</td><td style="text-align:right;color:var(--warn-color)">−4.4%</td></tr>
+            <tr><td style="padding:3px 8px 3px 0">8</td><td style="text-align:right">107s</td><td style="text-align:right;color:var(--warn-color)">−5.3%</td></tr>
+          </table>
+        </div>
+        <br/>
+        <strong>Recommended fix:</strong> Move to a single-node pool.
+        <code style="font-size:11px;background:var(--bg-input);padding:2px 6px;border-radius:4px">spark.executor.instances=0</code>
+      </div>`;
+
+    const tier1 = renderTierBlock('kusto', '✦ Scaling Predictions', 'verified', '✅ VERIFIED', scalingBody, true);
+
+    return `
+      <div class="response-container">
+        <div class="step-trail">${renderStepTrail(steps)}</div>
+        ${tier1}
+        <div class="source-chips">
+          <span class="source-chip chip-kusto">✦ sparklens_predictions · analyze_scaling skill</span>
+        </div>
+        <div class="response-summary">
+          <strong>Scaling will not help.</strong> 96.4% of runtime is driver-side — doubling executors buys only ~5% improvement at 2× the cost. Switch to a single-node pool instead.
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);padding:6px 0 2px">Source: prior analyze_app result in this session</div>
+        ${renderFeedbackBar()}
+      </div>`;
+  }
+
+  /* ── Driver-heavy context follow-up ────── */
+  if (lower.includes('driver') || lower.includes('driver heavy') || lower.includes('driver-heavy')) {
+    const steps = [
+      '🔗  Resolved reference → application_1771439776896_0001',
+      '📋  Reading prior analyze_app result from session',
+    ];
+
+    const ctxBody = `
+      <div style="padding:4px 0 10px;font-size:13px;color:var(--text-secondary);line-height:1.7">
+        <strong style="color:var(--text-primary)">Yes — this is a driver-heavy job.</strong><br/><br/>
+        <strong>Driver Time %: 96.4%</strong> of total wall-clock time is spent on the driver.
+        Executors are idle for 96.4% of the job (109s out of 113s total).<br/><br/>
+        This matches <strong>Pattern A — Driver Overhead</strong> in the SparkLens analysis:<br/>
+        <div style="margin:8px 0 0 12px;font-size:12px;color:var(--text-muted)">
+          • Executor Efficiency: 41.1% (executors mostly waiting)<br/>
+          • sparklens label: <code style="font-size:11px;background:var(--bg-input);padding:1px 5px;border-radius:3px">Architecture - Driver Overhead</code><br/>
+          • Fabric label: <code style="font-size:11px;background:var(--bg-input);padding:1px 5px;border-radius:3px">💰 Cost Optimization: Job is driver-heavy (&gt;90% driver time)</code>
+        </div>
+        <br/>
+        <strong>What this means:</strong> The Spark driver is doing most of the work (data collection, iteration, Python calls) while executor containers sit idle consuming resources.
+      </div>`;
+
+    const tier1 = renderTierBlock('kusto', '✦ Context — Driver Overhead', 'verified', '✅ FROM SESSION DATA', ctxBody, true);
+
+    return `
+      <div class="response-container">
+        <div class="step-trail">${renderStepTrail(steps)}</div>
+        ${tier1}
+        <div class="source-chips">
+          <span class="source-chip chip-kusto">✦ sparklens_recommedations · analyze_app result</span>
+        </div>
+        <div class="response-summary">
+          Yes — driver-heavy (96.4% driver time). Scaling executors will not help. Use a single-node pool or refactor to push work to executors.
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);padding:6px 0 2px">Source: prior analyze_app result in this session — no new Kusto call needed</div>
+        ${renderFeedbackBar()}
+      </div>`;
+  }
+
+  /* ── General "how to fix / improve" context question ────── */
+  if (lower.includes('how') && (lower.includes('fix') || lower.includes('improv') || lower.includes('optim') || lower.includes('faster')) ||
+      lower.includes('what should') || lower.includes('recommend') || lower.includes('what to do') || lower.includes('next step')) {
+    const steps = [
+      '🔗  Resolved reference → application_1771439776896_0001',
+      '📋  Reading prior analyze_app + fabric_recommedations from session',
+    ];
+
+    const ctxBody = `
+      <div style="padding:4px 0 10px;font-size:13px;color:var(--text-secondary);line-height:1.7">
+        Based on the analysis of <strong>application_1771439776896_0001</strong>, here are the prioritised fixes:<br/><br/>
+        <div style="margin-left:4px">
+          <div style="margin-bottom:10px;padding:8px 12px;background:rgba(255,80,80,0.05);border-left:3px solid var(--bad-color);border-radius:0 4px 4px 0">
+            <div style="font-size:11px;font-weight:700;color:var(--bad-color);margin-bottom:3px">🔴 HIGH — Architecture · Driver Overhead (96.4%)</div>
+            Move to single-node pool: <code style="font-size:11px;background:var(--bg-input);padding:1px 5px;border-radius:3px">spark.executor.instances=0</code><br/>
+            <span style="font-size:11px;color:var(--text-muted)">Eliminates wasted executor cost immediately.</span>
+          </div>
+          <div style="margin-bottom:10px;padding:8px 12px;background:rgba(255,160,0,0.05);border-left:3px solid var(--warn-color);border-radius:0 4px 4px 0">
+            <div style="font-size:11px;font-weight:700;color:var(--warn-color);margin-bottom:3px">🟠 HIGH — Fabric: Enable Native Execution Engine</div>
+            <code style="font-size:11px;background:var(--bg-input);padding:1px 5px;border-radius:3px">spark.native.enabled=true</code><br/>
+            <span style="font-size:11px;color:var(--text-muted)">Vectorized execution, 2–5× improvement on CPU-bound stages.</span>
+          </div>
+          <div style="padding:8px 12px;background:rgba(0,183,195,0.05);border-left:3px solid var(--fabric-cyan);border-radius:0 4px 4px 0">
+            <div style="font-size:11px;font-weight:700;color:var(--fabric-cyan);margin-bottom:3px">ℹ️ INFO — Fabric: Enable Auto Compaction</div>
+            <code style="font-size:11px;background:var(--bg-input);padding:1px 5px;border-radius:3px">spark.databricks.delta.autoCompact.enabled=true</code>
+          </div>
+        </div>
+      </div>`;
+
+    const tier1 = renderTierBlock('kusto', '✦ Recommendations for application_1771439776896_0001', 'verified', '✅ FROM SESSION DATA', ctxBody, true);
+
+    return `
+      <div class="response-container">
+        <div class="step-trail">${renderStepTrail(steps)}</div>
+        ${tier1}
+        <div class="source-chips">
+          <span class="source-chip chip-kusto">✦ sparklens_recommedations</span>
+          <span class="source-chip chip-fabric">● fabric_recommedations</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);padding:6px 0 2px">Source: prior analyze_app result in this session — no new Kusto call needed</div>
+        ${renderFeedbackBar()}
+      </div>`;
+  }
+
+  /* ── Generic LLM fallback ────── */
+  const steps = ['🤖  No Kusto match found — invoking LLM fallback'];
+
+  const aiBody = `
+    <div class="ai-warning-block">
+      <div class="ai-warning-header">⚠️ AI GENERATED — NOT FROM YOUR DATA</div>
+      <div class="ai-warning-meta">
+        Source: LLM training knowledge<br/>
+        Confidence: MEDIUM<br/>
+        Validate before applying to production
+      </div>
+      <div class="ai-warning-content">
+        I don't have live Kusto data matching that query right now. 
+        Try being more specific — include an application ID, a metric name,
+        or ask about a specific table (e.g. sparklens_metrics, fabric_recommedations).
+        <br/><br/>
+        Examples: <code style="font-family:'JetBrains Mono',monospace;font-size:11px;background:rgba(0,0,0,0.2);padding:1px 5px;border-radius:3px">analyze application_XXXX_XXXX</code>&nbsp;
+        or <code style="font-family:'JetBrains Mono',monospace;font-size:11px;background:rgba(0,0,0,0.2);padding:1px 5px;border-radius:3px">show top 5 slowest apps</code>
+      </div>
+    </div>`;
+
+  const tier3 = renderTierBlock('llm', '△ GPT-4o Fallback', 'ai', '⚠️ AI GENERATED', aiBody, true);
+
+  return `
+    <div class="response-container">
+      <div class="step-trail">${renderStepTrail(steps)}</div>
+      ${tier3}
+      ${renderFeedbackBar()}
+    </div>`;
+}
+
+/* ─── Send message ──────────────────────────────────────────────────────────  */
+function sendMessage() {
+  const box = document.getElementById('inputBox');
+  const text = box.value.trim();
+  if (!text) return;
+
+  // Hide welcome screen on first message
+  const welcome = document.getElementById('welcomeScreen');
+  if (welcome) welcome.remove();
+
+  const chatArea = document.getElementById('chatArea');
+
+  // Append user message
+  chatArea.insertAdjacentHTML('beforeend', renderUserMessage(text));
+
+  // Append loading indicator
+  const loadId = 'load-' + Date.now();
+  chatArea.insertAdjacentHTML('beforeend', `
+    <div class="message-row" id="${loadId}">
+      <div class="avatar">⚡</div>
+      <div class="message-body">
+        <div class="step-trail">
+          <div class="step-item">
+            <div class="step-circle" style="background:rgba(0,183,195,0.15);animation:pulse 1s infinite">
+              <span style="color:var(--fabric-cyan);font-size:7px">▶</span>
+            </div>
+            <span class="step-text" style="color:var(--fabric-cyan)">Routing to skill engine…</span>
+          </div>
+        </div>
+      </div>
+    </div>`);
+
+  box.value = '';
+  box.style.height = 'auto';
+  chatArea.scrollTop = chatArea.scrollHeight;
+
+  // Call live backend
+  const userQuery = text;
+  fetch(API_BASE + '/api/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message: userQuery, session_id: SESSION_ID})
+  })
+  .then(r => r.json())
+  .then(data => {
+    const loadEl = document.getElementById(loadId);
+    if (!loadEl) return;
+    if (data.error) {
+      loadEl.querySelector('.message-body').innerHTML = renderErrorResponse(data.error);
+    } else {
+      loadEl.querySelector('.message-body').innerHTML = renderTextResponse(data.response);
+    }
+    chatArea.scrollTop = chatArea.scrollHeight;
+  })
+  .catch(err => {
+    const loadEl = document.getElementById(loadId);
+    if (!loadEl) return;
+    // Backend unreachable — fall back to demo
+    loadEl.querySelector('.message-body').innerHTML = buildDemoResponse(userQuery);
+    chatArea.scrollTop = chatArea.scrollHeight;
+  });
+}
+</script>
+</body>
+</html>

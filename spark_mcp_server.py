@@ -27,6 +27,22 @@ from openai import AzureOpenAI
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 
+# ── Compatibility patch ────────────────────────────────────────────────────────
+# mcp 1.26.0 calls create_model(name, result=<type>) in _create_wrapped_model,
+# which raises PydanticUserError in pydantic ≥2.10.  Patch it to use the
+# correct (annotation, ...) tuple syntax before any @mcp_server.tool() calls.
+def _patched_create_wrapped_model(func_name: str, annotation: Any) -> type:
+    from pydantic import create_model as _cm
+    model_name = f"{func_name}Output"
+    try:
+        return _cm(model_name, result=(annotation, ...))
+    except Exception:
+        return _cm(model_name)
+
+import mcp.server.fastmcp.utilities.func_metadata as _fmeta
+_fmeta._create_wrapped_model = _patched_create_wrapped_model
+# ──────────────────────────────────────────────────────────────────────────────
+
 load_dotenv()
 
 mcp_server = FastMCP("SparkAdvisor")
@@ -292,6 +308,9 @@ def search_spark_docs(query: str, top_k: int = 5, category: Optional[str] = None
         
         documents = []
         for result in results:
+            score = result.get("@search.score", 0.0)
+            if score < 0.5:
+                continue  # drop low-relevance results to prevent returning unrelated docs
             documents.append({
                 "id": result.get("id", ""),
                 "content": result.get("content", ""),
@@ -299,7 +318,7 @@ def search_spark_docs(query: str, top_k: int = 5, category: Optional[str] = None
                 "category": result.get("category", []),
                 "source_url": result.get("source_url", ""),
                 "filename": result.get("filename", ""),
-                "score": result.get("@search.score", 0.0)
+                "score": score
             })
         
         return json.dumps(documents, default=str)

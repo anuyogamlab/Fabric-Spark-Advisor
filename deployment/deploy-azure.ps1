@@ -1,15 +1,16 @@
-# Azure Deployment Script - Deploy Spark Advisor to Azure Container Apps
+﻿# Azure Deployment Script - Deploy Spark Advisor to Azure Container Apps
 # Uses .env file for credentials
 
 param(
     [switch]$BuildOnly,
     [switch]$DeployOnly,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$EnvFile = ".env"   # e.g. -EnvFile .env.new-tenant
 )
 
 # Load environment variables from .env file
-if (-not (Test-Path ".env")) {
-    Write-Host "❌ Error: .env file not found!" -ForegroundColor Red
+if (-not (Test-Path $EnvFile)) {
+    Write-Host "❌ Error: $EnvFile file not found!" -ForegroundColor Red
     Write-Host ""
     Write-Host "Please create .env file:" -ForegroundColor Yellow
     Write-Host "  1. Copy .env.example to .env"
@@ -18,8 +19,8 @@ if (-not (Test-Path ".env")) {
     exit 1
 }
 
-Write-Host "📄 Loading credentials from .env..." -ForegroundColor Cyan
-Get-Content .env | ForEach-Object {
+Write-Host "📄 Loading credentials from $EnvFile..." -ForegroundColor Cyan
+Get-Content $EnvFile | ForEach-Object {
     if ($_ -match '^([^=]+)=(.+)$') {
         $name = $matches[1].Trim()
         $value = $matches[2].Trim()
@@ -29,16 +30,19 @@ Get-Content .env | ForEach-Object {
 
 # Validate required variables
 $required = @(
-    "KUSTO_CLUSTER_URL",
+    "KUSTO_CLUSTER_URI",
     "KUSTO_DATABASE",
-    "KUSTO_CLIENT_ID",
-    "KUSTO_CLIENT_SECRET",
-    "KUSTO_TENANT_ID",
     "AZURE_SEARCH_ENDPOINT",
     "AZURE_SEARCH_KEY",
     "AZURE_OPENAI_ENDPOINT",
     "AZURE_OPENAI_API_KEY"
 )
+
+# Service principal creds only required when NOT using CLI/managed identity auth
+$authMethod = [Environment]::GetEnvironmentVariable("AZURE_AUTH_METHOD")
+if ($authMethod -ne "cli" -and $authMethod -ne "managed_identity") {
+    $required += @("KUSTO_CLIENT_ID", "KUSTO_CLIENT_SECRET", "KUSTO_TENANT_ID")
+}
 
 $missing = @()
 foreach ($var in $required) {
@@ -54,6 +58,8 @@ if ($missing.Count -gt 0) {
     Write-Host "Please update your .env file" -ForegroundColor Yellow
     exit 1
 }
+
+$usingManagedIdentity = ($authMethod -eq "cli" -or $authMethod -eq "managed_identity")
 
 Write-Host "✅ All credentials loaded" -ForegroundColor Green
 
@@ -80,18 +86,6 @@ try {
 } catch {
     Write-Host "❌ Azure CLI not found. Please install: https://aka.ms/azure-cli" -ForegroundColor Red
     exit 1
-}
-
-# Check if Docker is installed
-if (-not $DeployOnly) {
-    Write-Host "🔍 Checking Docker..." -ForegroundColor Cyan
-    try {
-        $dockerVersion = docker --version
-        Write-Host "✅ Docker found: $dockerVersion" -ForegroundColor Green
-    } catch {
-        Write-Host "❌ Docker not found. Please install: https://www.docker.com/products/docker-desktop" -ForegroundColor Red
-        exit 1
-    }
 }
 
 # Login to Azure
@@ -144,33 +138,24 @@ if (-not $BuildOnly -and -not $SkipBuild) {
     }
 }
 
-# Build and push Docker image
+# Build image in Azure (no local Docker required)
 if (-not $DeployOnly) {
     Write-Host ""
-    Write-Host "🔨 Building Docker image..." -ForegroundColor Cyan
-    
-    # Login to ACR
-    az acr login --name $ACR_NAME
-    
-    $imageName = "$ACR_NAME.azurecr.io/spark-advisor-mcp:latest"
-    
-    docker build -t $imageName .
-    
+    Write-Host "🔨 Building image in Azure (no local Docker needed)..." -ForegroundColor Cyan
+    Write-Host "   This will take 5-10 minutes..." -ForegroundColor Yellow
+
+    az acr build `
+        --registry $ACR_NAME `
+        --image spark-advisor-mcp:latest `
+        --file Dockerfile `
+        . `
+        --platform linux
+
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "❌ Docker build failed" -ForegroundColor Red
+        Write-Host "❌ Azure cloud build failed" -ForegroundColor Red
         exit 1
     }
-    Write-Host "✅ Image built: $imageName" -ForegroundColor Green
-    
-    Write-Host ""
-    Write-Host "📤 Pushing image to ACR..." -ForegroundColor Cyan
-    docker push $imageName
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "❌ Docker push failed" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "✅ Image pushed" -ForegroundColor Green
+    Write-Host "✅ Image built and pushed to ACR" -ForegroundColor Green
 }
 
 if ($BuildOnly) {
@@ -193,38 +178,72 @@ $appExists = az containerapp show --name $APP_NAME --resource-group $RESOURCE_GR
 
 if (-not $appExists) {
     # Create new app
-    az containerapp create `
-        --name $APP_NAME `
-        --resource-group $RESOURCE_GROUP `
-        --environment $CONTAINERAPPS_ENV `
-        --image "$ACR_NAME.azurecr.io/spark-advisor-mcp:latest" `
-        --target-port 8000 `
-        --ingress external `
-        --registry-server "$ACR_NAME.azurecr.io" `
-        --registry-username $acrUsername `
-        --registry-password $acrPassword `
-        --cpu 1.0 `
-        --memory 2.0Gi `
-        --min-replicas 1 `
-        --max-replicas 3 `
-        --env-vars `
-            KUSTO_CLUSTER_URL="$env:KUSTO_CLUSTER_URL" `
-            KUSTO_DATABASE="$env:KUSTO_DATABASE" `
-            KUSTO_CLIENT_ID="$env:KUSTO_CLIENT_ID" `
-            KUSTO_CLIENT_SECRET="secretref:kusto-secret" `
-            KUSTO_TENANT_ID="$env:KUSTO_TENANT_ID" `
-            AZURE_SEARCH_ENDPOINT="$env:AZURE_SEARCH_ENDPOINT" `
-            AZURE_SEARCH_KEY="secretref:search-key" `
-            AZURE_SEARCH_INDEX="$env:AZURE_SEARCH_INDEX" `
-            AZURE_OPENAI_ENDPOINT="$env:AZURE_OPENAI_ENDPOINT" `
-            AZURE_OPENAI_API_KEY="secretref:openai-key" `
-            AZURE_OPENAI_DEPLOYMENT="$env:AZURE_OPENAI_DEPLOYMENT" `
-            AZURE_OPENAI_API_VERSION="$env:AZURE_OPENAI_API_VERSION" `
-        --secrets `
-            kusto-secret="$env:KUSTO_CLIENT_SECRET" `
-            search-key="$env:AZURE_SEARCH_KEY" `
-            openai-key="$env:AZURE_OPENAI_API_KEY" `
-        --output none
+    if ($usingManagedIdentity) {
+        Write-Host "ℹ️ Using system-assigned managed identity for Kusto auth" -ForegroundColor Cyan
+        az containerapp create `
+            --name $APP_NAME `
+            --resource-group $RESOURCE_GROUP `
+            --environment $CONTAINERAPPS_ENV `
+            --image "$ACR_NAME.azurecr.io/spark-advisor-mcp:latest" `
+            --target-port 7432 `
+            --ingress external `
+            --registry-server "$ACR_NAME.azurecr.io" `
+            --registry-username $acrUsername `
+            --registry-password $acrPassword `
+            --system-assigned `
+            --cpu 1.0 `
+            --memory 2.0Gi `
+            --min-replicas 1 `
+            --max-replicas 3 `
+            --env-vars `
+                KUSTO_CLUSTER_URI="$env:KUSTO_CLUSTER_URI" `
+                KUSTO_DATABASE="$env:KUSTO_DATABASE" `
+                AZURE_AUTH_METHOD="auto" `
+                AZURE_SEARCH_ENDPOINT="$env:AZURE_SEARCH_ENDPOINT" `
+                AZURE_SEARCH_KEY="secretref:search-key" `
+                AZURE_SEARCH_INDEX="$env:AZURE_SEARCH_INDEX" `
+                AZURE_OPENAI_ENDPOINT="$env:AZURE_OPENAI_ENDPOINT" `
+                AZURE_OPENAI_API_KEY="secretref:openai-key" `
+                AZURE_OPENAI_DEPLOYMENT="$env:AZURE_OPENAI_DEPLOYMENT" `
+                AZURE_OPENAI_API_VERSION="$env:AZURE_OPENAI_API_VERSION" `
+            --secrets `
+                search-key="$env:AZURE_SEARCH_KEY" `
+                openai-key="$env:AZURE_OPENAI_API_KEY" `
+            --output none
+    } else {
+        az containerapp create `
+            --name $APP_NAME `
+            --resource-group $RESOURCE_GROUP `
+            --environment $CONTAINERAPPS_ENV `
+            --image "$ACR_NAME.azurecr.io/spark-advisor-mcp:latest" `
+            --target-port 7432 `
+            --ingress external `
+            --registry-server "$ACR_NAME.azurecr.io" `
+            --registry-username $acrUsername `
+            --registry-password $acrPassword `
+            --cpu 1.0 `
+            --memory 2.0Gi `
+            --min-replicas 1 `
+            --max-replicas 3 `
+            --env-vars `
+                KUSTO_CLUSTER_URI="$env:KUSTO_CLUSTER_URI" `
+                KUSTO_DATABASE="$env:KUSTO_DATABASE" `
+                KUSTO_CLIENT_ID="$env:KUSTO_CLIENT_ID" `
+                KUSTO_CLIENT_SECRET="secretref:kusto-secret" `
+                KUSTO_TENANT_ID="$env:KUSTO_TENANT_ID" `
+                AZURE_SEARCH_ENDPOINT="$env:AZURE_SEARCH_ENDPOINT" `
+                AZURE_SEARCH_KEY="secretref:search-key" `
+                AZURE_SEARCH_INDEX="$env:AZURE_SEARCH_INDEX" `
+                AZURE_OPENAI_ENDPOINT="$env:AZURE_OPENAI_ENDPOINT" `
+                AZURE_OPENAI_API_KEY="secretref:openai-key" `
+                AZURE_OPENAI_DEPLOYMENT="$env:AZURE_OPENAI_DEPLOYMENT" `
+                AZURE_OPENAI_API_VERSION="$env:AZURE_OPENAI_API_VERSION" `
+            --secrets `
+                kusto-secret="$env:KUSTO_CLIENT_SECRET" `
+                search-key="$env:AZURE_SEARCH_KEY" `
+                openai-key="$env:AZURE_OPENAI_API_KEY" `
+            --output none
+    }
 } else {
     # Update existing app
     Write-Host "ℹ️ App exists, updating..." -ForegroundColor Yellow
@@ -267,6 +286,21 @@ Write-Host ""
 Write-Host "📊 Monitor logs:" -ForegroundColor Cyan
 Write-Host "   az containerapp logs show --name $APP_NAME --resource-group $RESOURCE_GROUP --follow" -ForegroundColor White
 Write-Host ""
+
+if ($usingManagedIdentity) {
+    $principalId = az containerapp show `
+        --name $APP_NAME `
+        --resource-group $RESOURCE_GROUP `
+        --query identity.principalId `
+        -o tsv
+    Write-Host "⚠️  IMPORTANT: Grant Kusto access to managed identity" -ForegroundColor Yellow
+    Write-Host "   The container uses system-assigned managed identity." -ForegroundColor Yellow
+    Write-Host "   Principal ID: $principalId" -ForegroundColor White
+    Write-Host ""
+    Write-Host "   In your Fabric Eventhouse, run this KQL command:" -ForegroundColor Yellow
+    Write-Host "   .add database ['Spark Monitoring'] viewers ('aadapp=$principalId')" -ForegroundColor White
+    Write-Host ""
+}
 Write-Host "🔧 Manage in Azure Portal:" -ForegroundColor Cyan
 Write-Host "   https://portal.azure.com/#@/resource/subscriptions/.../resourceGroups/$RESOURCE_GROUP/providers/Microsoft.App/containerApps/$APP_NAME" -ForegroundColor White
 Write-Host ""
